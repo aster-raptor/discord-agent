@@ -1,6 +1,8 @@
 services:
   app:
-    image: rust:1.77-bookworm
+    build:
+      context: .
+      dockerfile: Dockerfile.app
     working_dir: /workspace
     command: ["sleep", "infinity"]
     volumes:
@@ -8,15 +10,16 @@ services:
       - cargo-registry:/usr/local/cargo/registry
       - cargo-git:/usr/local/cargo/git
       - cargo-target:/workspace/target
+      - node-modules:/workspace/node_modules
     environment:
       CARGO_HOME: /usr/local/cargo
       RUSTUP_TOOLCHAIN: stable
-      RSS_BIND_ADDR: 0.0.0.0:8080
-      PUBLIC_BASE_URL: http://localhost:8080
+      PUBLIC_BASE_URL: http://localhost:3000
     ports:
-      - "8080:8080"
+      - "3000:3000"
 
 volumes:
   cargo-registry:
   cargo-git:
   cargo-target:
+  node-modules:

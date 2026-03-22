@@ -1,5 +1,6 @@
 .git
 .codex
+.next
+node_modules
 target
 data
-docs
