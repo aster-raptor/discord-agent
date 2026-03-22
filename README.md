@@ -73,3 +73,4 @@ docker compose exec app npm run dev
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Vercel Setup](docs/vercel-setup.md)
