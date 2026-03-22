@@ -73,4 +73,5 @@ docker compose exec app npm run dev
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Notion and Discord Setup](docs/notion-discord-setup.md)
 - [Vercel Setup](docs/vercel-setup.md)
