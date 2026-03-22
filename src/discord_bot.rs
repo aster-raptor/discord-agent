@@ -29,7 +29,6 @@ pub async fn run(config: AppConfig) -> Result<()> {
 
     for worker_id in 0..config.worker_concurrency {
         let worker_state = WorkerState {
-            config: config.clone(),
             database: Arc::clone(&database),
             notion: Arc::clone(&notion),
             codex: Arc::clone(&codex),
@@ -43,9 +42,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
         });
     }
 
-    let intents = GatewayIntents::GUILD_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT
-        | GatewayIntents::GUILD_MEMBERS;
+    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 
     let handler = Handler {
         state: Arc::new(BotState {
@@ -77,7 +74,6 @@ struct BotState {
 }
 
 struct WorkerState {
-    config: AppConfig,
     database: Arc<Database>,
     notion: Arc<NotionClient>,
     codex: Arc<CodexRunner>,
@@ -125,30 +121,12 @@ impl EventHandler for Handler {
             return;
         }
 
-        let guild_id = match msg.guild_id {
-            Some(guild_id) => guild_id,
-            None => return,
-        };
-
-        if !is_thread_message(&ctx, &msg).await {
+        if msg.guild_id.is_none() {
             return;
         }
 
-        match is_allowed(&ctx, &msg, &self.state.config).await {
-            Ok(true) => {}
-            Ok(false) => {
-                let _ = msg
-                    .reply(
-                        &ctx.http,
-                        "This bot is restricted to the configured allowlist.",
-                    )
-                    .await;
-                return;
-            }
-            Err(error) => {
-                error!("failed to authorize message: {:?}", error);
-                return;
-            }
+        if !is_thread_message(&ctx, &msg).await {
+            return;
         }
 
         let task_type = infer_task_type(&msg.content);
@@ -167,8 +145,6 @@ impl EventHandler for Handler {
         let mut task = TaskRecord::new(
             msg.channel_id.0,
             msg.channel_id.0,
-            guild_id.0,
-            msg.author.id.0,
             msg.id.0,
             title,
             prompt,
@@ -375,31 +351,6 @@ async fn is_thread_message(ctx: &Context, msg: &Message) -> bool {
         ),
         _ => false,
     }
-}
-
-async fn is_allowed(ctx: &Context, msg: &Message, config: &AppConfig) -> Result<bool> {
-    if config.discord_allowed_user_ids.contains(&msg.author.id.0) {
-        return Ok(true);
-    }
-
-    let roles = match &msg.member {
-        Some(member) => member.roles.clone(),
-        None => msg
-            .guild_id
-            .unwrap()
-            .member(&ctx.http, msg.author.id)
-            .await
-            .context("failed to fetch guild member")?
-            .roles,
-    };
-
-    for role_id in roles {
-        if config.discord_allowed_role_ids.contains(&role_id.0) {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
 }
 
 fn infer_task_type(content: &str) -> TaskType {

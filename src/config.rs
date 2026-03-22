@@ -5,8 +5,6 @@ use anyhow::{anyhow, Result};
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub discord_token: String,
-    pub discord_allowed_user_ids: Vec<u64>,
-    pub discord_allowed_role_ids: Vec<u64>,
     pub sqlite_path: String,
     pub codex_bin: String,
     pub codex_model: Option<String>,
@@ -20,8 +18,6 @@ impl AppConfig {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             discord_token: env::var("DISCORD_TOKEN").unwrap_or_default(),
-            discord_allowed_user_ids: parse_u64_list("DISCORD_ALLOWED_USER_IDS")?,
-            discord_allowed_role_ids: parse_u64_list("DISCORD_ALLOWED_ROLE_IDS")?,
             sqlite_path: env::var("SQLITE_PATH")
                 .unwrap_or_else(|_| "data/discord-agent.sqlite3".to_string()),
             codex_bin: env::var("CODEX_BIN").unwrap_or_else(|_| "codex".to_string()),
@@ -49,35 +45,6 @@ impl AppConfig {
             return Err(anyhow!("DISCORD_TOKEN is required"));
         }
 
-        if self.discord_allowed_user_ids.is_empty() && self.discord_allowed_role_ids.is_empty() {
-            return Err(anyhow!(
-                "either DISCORD_ALLOWED_USER_IDS or DISCORD_ALLOWED_ROLE_IDS must be set"
-            ));
-        }
-
         Ok(())
     }
-}
-
-fn parse_u64_list(var_name: &str) -> Result<Vec<u64>> {
-    let raw = match env::var(var_name) {
-        Ok(value) => value,
-        Err(_) => return Ok(Vec::new()),
-    };
-
-    let mut values = Vec::new();
-    for part in raw.split(',') {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        values.push(
-            trimmed
-                .parse::<u64>()
-                .map_err(|_| anyhow!("{} contains an invalid u64 value: {}", var_name, trimmed))?,
-        );
-    }
-
-    Ok(values)
 }

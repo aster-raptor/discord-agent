@@ -17,7 +17,7 @@ Discord thread message
   |
   v
 bot binary (Rust / serenity)
-  |- allowlist check
+  |- thread message check
   |- SQLite persistence
   `- worker loop
         |
@@ -44,7 +44,7 @@ Rust 側の責務は Discord 受付とバックグラウンド実行です。
 - `src/bin/bot.rs`
   Bot プロセスの起動点
 - `src/discord_bot.rs`
-  allowlist 判定、タスク受理、進捗通知、ワーカー実行
+  スレッド投稿の受付、進捗通知、ワーカー実行
 - `src/db.rs`
   SQLite 永続化
 - `src/codex.rs`
@@ -52,7 +52,7 @@ Rust 側の責務は Discord 受付とバックグラウンド実行です。
 - `src/notion.rs`
   完了タスクを Notion へ保存
 
-Bot は完了タスクを Notion に書き込み、`PUBLIC_BASE_URL/tasks/:task_id` の形式で公開 URL を記録します。
+Bot は単一ユーザー利用を前提としており、Discord 内の追加認可制御は行いません。完了タスクは `PUBLIC_BASE_URL/tasks/:task_id` の形式で公開 URL を Notion に記録します。
 
 ### 2. Next.js Public App
 
@@ -76,7 +76,7 @@ Next.js 側は stateless で、公開データの正本は Notion です。SQLit
 主要な設定は以下です。
 
 - Rust Bot
-  `DISCORD_TOKEN`, `DISCORD_ALLOWED_USER_IDS`, `DISCORD_ALLOWED_ROLE_IDS`, `SQLITE_PATH`, `CODEX_BIN`, `CODEX_MODEL`, `WORKER_CONCURRENCY`, `NOTION_TOKEN`, `NOTION_TASK_DATABASE_ID`, `PUBLIC_BASE_URL`
+  `DISCORD_TOKEN`, `SQLITE_PATH`, `CODEX_BIN`, `CODEX_MODEL`, `WORKER_CONCURRENCY`, `NOTION_TOKEN`, `NOTION_TASK_DATABASE_ID`, `PUBLIC_BASE_URL`
 - Next.js Public App
   `NOTION_TOKEN`, `NOTION_TASK_DATABASE_ID`, `PUBLIC_BASE_URL`
 
@@ -87,7 +87,7 @@ Next.js 側は stateless で、公開データの正本は Notion です。SQLit
 ### タスク受付から公開まで
 
 1. Discord スレッドに依頼を書き込む
-2. Rust Bot が allowlist とスレッド種別を検証する
+2. Rust Bot がスレッド投稿かどうかを検証する
 3. Bot がタスクを SQLite に保存する
 4. ワーカーが Codex CLI を呼び出す
 5. 完了結果を Bot が Notion に保存する
@@ -115,6 +115,7 @@ Next.js 側は stateless で、公開データの正本は Notion です。SQLit
 
 ## 現状の制約
 
+- Discord のサーバー内スレッド投稿のみ処理し、DM は扱わない
 - Coding タスク型は定義済みだが、v1 では受け付けず Research のみ処理する
 - 公開面は Notion 依存なので、Notion 障害時は RSS と公開ページも影響を受ける
 - ジョブキューがプロセス内メモリのみのため、Bot 再起動時に未処理ジョブは失われる

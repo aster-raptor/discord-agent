@@ -65,7 +65,6 @@ impl NotionClient {
                     "coding" => "coding",
                     _ => "research",
                 }),
-                "Requester": rich_text_property(&task.requester_id.to_string()),
                 "Publish": { "checkbox": true },
                 "Public Summary": rich_text_property(&summary),
                 "Updated At": { "date": { "start": task.updated_at } },

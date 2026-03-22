@@ -8,7 +8,6 @@
 
 - Discord Bot を作成する
 - Bot をサーバーへ招待する
-- 実行を許可するユーザーまたはロールを決める
 - Notion integration を作成する
 - Task Database を作成して integration に共有する
 - Bot の環境変数を設定する
@@ -35,14 +34,12 @@ DISCORD_TOKEN=xxxxxxxxxxxxxxxx
 
 - `GUILD_MESSAGES`
 - `MESSAGE_CONTENT`
-- `GUILD_MEMBERS`
 
-そのため Discord Developer Portal の Bot 設定で少なくとも以下を有効化してください。
+そのため Discord Developer Portal の Bot 設定で以下を有効化してください。
 
 - `MESSAGE CONTENT INTENT`
-- `SERVER MEMBERS INTENT`
 
-`src/discord_bot.rs` では `MESSAGE_CONTENT` と `GUILD_MEMBERS` を要求しているため、ここが無効だと正常に動きません。
+`SERVER MEMBERS INTENT` は不要です。
 
 ### 1-3. Bot をサーバーへ招待
 
@@ -57,43 +54,9 @@ Bot Permissions の最低限:
 - `View Channels`
 - `Send Messages`
 - `Read Message History`
-- `Create Public Threads` は不要
-- `Create Private Threads` は不要
 - `Send Messages in Threads`
 
-この Bot は既存スレッド内の投稿を読む前提なので、主に「スレッド内の読み書き」ができれば十分です。
-
-### 1-4. 実行許可の制御
-
-Bot は allowlist 方式です。実行を許可するには、次のどちらかを設定する必要があります。
-
-- `DISCORD_ALLOWED_USER_IDS`
-- `DISCORD_ALLOWED_ROLE_IDS`
-
-両方空だと起動時にエラーになります。
-
-#### ユーザー ID を使う場合
-
-1. Discord で Developer Mode を有効化する
-2. 許可したいユーザーを右クリックして ID をコピーする
-3. カンマ区切りで `DISCORD_ALLOWED_USER_IDS` に設定する
-
-```text
-DISCORD_ALLOWED_USER_IDS=123456789012345678,234567890123456789
-```
-
-#### ロール ID を使う場合
-
-1. Discord で対象ロールの ID を取得する
-2. カンマ区切りで `DISCORD_ALLOWED_ROLE_IDS` に設定する
-
-```text
-DISCORD_ALLOWED_ROLE_IDS=345678901234567890,456789012345678901
-```
-
-#### 推奨
-
-通常運用では個人 ID よりロール ID を使う方が管理しやすいです。
+この Bot は既存スレッド内の投稿を読む前提なので、主にスレッド内の読み書きができれば十分です。
 
 ## 2. Discord 側の利用前提
 
@@ -102,7 +65,6 @@ Bot は以下の条件を満たす投稿だけを処理します。
 - DM ではない
 - Discord サーバー内のメッセージである
 - スレッド内の投稿である
-- allowlist に含まれるユーザーまたはロールによる投稿である
 
 つまり、通常のテキストチャンネル直下の投稿は処理されません。依頼はスレッド内で行ってください。
 
@@ -131,7 +93,6 @@ Notion に task 管理用の database を作成し、以下のプロパティ名
 - `Title` (`title`)
 - `Status` (`select`)
 - `Task Type` (`select`)
-- `Requester` (`rich_text`)
 - `Publish` (`checkbox`)
 - `Public Summary` (`rich_text`)
 - `Updated At` (`date`)
@@ -161,7 +122,6 @@ NOTION_TASK_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ```text
 DISCORD_TOKEN=xxxxxxxxxxxxxxxx
-DISCORD_ALLOWED_ROLE_IDS=345678901234567890
 NOTION_TOKEN=secret_xxx
 NOTION_TASK_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 PUBLIC_BASE_URL=https://your-project.vercel.app
@@ -174,7 +134,6 @@ SQLITE_PATH=data/discord-agent.sqlite3
 CODEX_BIN=codex
 CODEX_MODEL=
 WORKER_CONCURRENCY=1
-DISCORD_ALLOWED_USER_IDS=
 ```
 
 補足:
@@ -195,7 +154,7 @@ docker compose run --rm app cargo test
 起動後の確認ポイント:
 
 - Bot が Discord に online 表示される
-- 許可されたユーザーがスレッド内で投稿すると `Accepted task` が返る
+- スレッド内で投稿すると `Accepted task` が返る
 - 完了後、Notion にページが作成される
 - `Publish=true` の完了タスクに `Public URL` が入る
 
@@ -211,30 +170,17 @@ docker compose run --rm app cargo test
 
 - Bot token を再取得して設定する
 
-### `either DISCORD_ALLOWED_USER_IDS or DISCORD_ALLOWED_ROLE_IDS must be set`
-
-原因:
-
-- allowlist が空
-
-対応:
-
-- ユーザー ID かロール ID を少なくとも 1 つ設定する
-
 ### Bot がメッセージに反応しない
 
 原因候補:
 
 - スレッド外の投稿をしている
-- allowlist 対象外のユーザー
 - `MESSAGE CONTENT INTENT` が無効
-- `SERVER MEMBERS INTENT` が無効
 
 対応:
 
 - スレッド内で投稿する
-- allowlist を確認する
-- Developer Portal で intents を有効にする
+- Developer Portal で intent を有効にする
 
 ### Notion にページが作成されない
 
@@ -265,5 +211,5 @@ docker compose run --rm app cargo test
 
 - Discord Bot と Vercel public app は別デプロイ
 - Notion は Bot と public app の共通データソース
-- Discord の allowlist は運用ポリシーに合わせてロール中心で管理するとよい
+- この Bot は一人利用前提で、Discord 内の追加認可制御は行わない
 - Notion の property 名はコードに埋め込まれているため、変更時は実装変更も必要

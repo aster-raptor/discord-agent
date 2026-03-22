@@ -104,8 +104,8 @@ impl Database {
                 &task.id,
                 task.thread_id.to_string(),
                 task.channel_id.to_string(),
-                task.guild_id.to_string(),
-                task.requester_id.to_string(),
+                "",
+                "",
                 task.discord_message_id.to_string(),
                 &task.title,
                 &task.prompt,
@@ -131,7 +131,7 @@ impl Database {
             params![
                 &task.id,
                 task.discord_message_id.to_string(),
-                task.requester_id.to_string(),
+                "",
                 &task.prompt,
                 &task.created_at
             ],
@@ -281,7 +281,7 @@ impl Database {
         let task = connection
             .query_row(
                 r#"
-                SELECT id, thread_id, channel_id, guild_id, requester_id, discord_message_id, title, prompt,
+                SELECT id, thread_id, channel_id, discord_message_id, title, prompt,
                        task_type, status, publish, public_summary, raw_output, notion_page_id, error_text,
                        started_at, completed_at, created_at, updated_at
                 FROM tasks
@@ -330,22 +330,20 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         id: row.get(0)?,
         thread_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
         channel_id: row.get::<_, String>(2)?.parse().unwrap_or_default(),
-        guild_id: row.get::<_, String>(3)?.parse().unwrap_or_default(),
-        requester_id: row.get::<_, String>(4)?.parse().unwrap_or_default(),
-        discord_message_id: row.get::<_, String>(5)?.parse().unwrap_or_default(),
-        title: row.get(6)?,
-        prompt: row.get(7)?,
-        task_type: TaskType::from_str(&row.get::<_, String>(8)?),
-        status: TaskStatus::from_str(&row.get::<_, String>(9)?),
-        publish: row.get::<_, i64>(10)? != 0,
-        public_summary: row.get(11)?,
-        raw_output: row.get(12)?,
-        notion_page_id: row.get(13)?,
-        error_text: row.get(14)?,
-        started_at: row.get(15)?,
-        completed_at: row.get(16)?,
-        created_at: row.get(17)?,
-        updated_at: row.get(18)?,
+        discord_message_id: row.get::<_, String>(3)?.parse().unwrap_or_default(),
+        title: row.get(4)?,
+        prompt: row.get(5)?,
+        task_type: TaskType::from_str(&row.get::<_, String>(6)?),
+        status: TaskStatus::from_str(&row.get::<_, String>(7)?),
+        publish: row.get::<_, i64>(8)? != 0,
+        public_summary: row.get(9)?,
+        raw_output: row.get(10)?,
+        notion_page_id: row.get(11)?,
+        error_text: row.get(12)?,
+        started_at: row.get(13)?,
+        completed_at: row.get(14)?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
     })
 }
 
