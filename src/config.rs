@@ -42,7 +42,7 @@ impl AppConfig {
                 .filter(|value| !value.is_empty()),
             public_base_url: env::var("PUBLIC_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".to_string()),
-            rss_bind_addr: env::var("RSS_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string()),
+            rss_bind_addr: resolve_rss_bind_addr(),
         })
     }
 
@@ -71,6 +71,17 @@ impl AppConfig {
     }
 }
 
+fn resolve_rss_bind_addr() -> String {
+    if let Ok(port) = env::var("PORT") {
+        let trimmed = port.trim();
+        if !trimmed.is_empty() {
+            return format!("0.0.0.0:{}", trimmed);
+        }
+    }
+
+    env::var("RSS_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string())
+}
+
 fn parse_u64_list(var_name: &str) -> Result<Vec<u64>> {
     let raw = match env::var(var_name) {
         Ok(value) => value,
@@ -92,4 +103,39 @@ fn parse_u64_list(var_name: &str) -> Result<Vec<u64>> {
     }
 
     Ok(values)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_rss_bind_addr;
+    use std::env;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn port_overrides_rss_bind_addr() {
+        let _guard = env_lock().lock().unwrap();
+        env::set_var("PORT", "9090");
+        env::set_var("RSS_BIND_ADDR", "127.0.0.1:1234");
+
+        assert_eq!(resolve_rss_bind_addr(), "0.0.0.0:9090");
+
+        env::remove_var("PORT");
+        env::remove_var("RSS_BIND_ADDR");
+    }
+
+    #[test]
+    fn falls_back_to_rss_bind_addr() {
+        let _guard = env_lock().lock().unwrap();
+        env::remove_var("PORT");
+        env::set_var("RSS_BIND_ADDR", "127.0.0.1:1234");
+
+        assert_eq!(resolve_rss_bind_addr(), "127.0.0.1:1234");
+
+        env::remove_var("RSS_BIND_ADDR");
+    }
 }

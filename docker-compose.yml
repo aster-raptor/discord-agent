@@ -1,0 +1,22 @@
+services:
+  app:
+    image: rust:1.77-bookworm
+    working_dir: /workspace
+    command: ["sleep", "infinity"]
+    volumes:
+      - .:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - cargo-target:/workspace/target
+    environment:
+      CARGO_HOME: /usr/local/cargo
+      RUSTUP_TOOLCHAIN: stable
+      RSS_BIND_ADDR: 0.0.0.0:8080
+      PUBLIC_BASE_URL: http://localhost:8080
+    ports:
+      - "8080:8080"
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  cargo-target:

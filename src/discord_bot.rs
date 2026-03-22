@@ -382,17 +382,18 @@ async fn is_allowed(ctx: &Context, msg: &Message, config: &AppConfig) -> Result<
         return Ok(true);
     }
 
-    let member = match &msg.member {
-        Some(member) => member.clone(),
+    let roles = match &msg.member {
+        Some(member) => member.roles.clone(),
         None => msg
             .guild_id
             .unwrap()
             .member(&ctx.http, msg.author.id)
             .await
-            .context("failed to fetch guild member")?,
+            .context("failed to fetch guild member")?
+            .roles,
     };
 
-    for role_id in member.roles {
+    for role_id in roles {
         if config.discord_allowed_role_ids.contains(&role_id.0) {
             return Ok(true);
         }

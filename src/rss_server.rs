@@ -135,3 +135,25 @@ fn xml_escape(value: &str) -> String {
 fn html_escape(value: &str) -> String {
     xml_escape(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::render_rss;
+    use crate::models::PublicTaskSummary;
+
+    #[test]
+    fn render_rss_uses_task_links() {
+        let tasks = vec![PublicTaskSummary {
+            task_id: "task-123".to_string(),
+            title: "Example".to_string(),
+            summary: "Summary".to_string(),
+            completed_at: Some("2026-03-22T12:00:00Z".to_string()),
+            updated_at: "2026-03-22T12:00:00Z".to_string(),
+        }];
+
+        let rss = render_rss("https://example.com", &tasks);
+
+        assert!(rss.contains("<link>https://example.com/tasks/task-123</link>"));
+        assert!(rss.contains("<title>Example</title>"));
+    }
+}
