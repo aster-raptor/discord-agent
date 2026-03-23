@@ -1,12 +1,9 @@
-name: Release Rust Bot
+name: CI Rust Bot
 
 on:
   push:
-    tags:
-      - "v*"
-
-permissions:
-  contents: write
+    branches:
+      - main
 
 jobs:
   build-bot:
@@ -28,12 +25,13 @@ jobs:
       - name: Build release binary
         run: cargo build --release --bin bot
 
-      - name: Package release artifact
+      - name: Package workflow artifact
+        id: package
         shell: bash
         run: |
           set -euo pipefail
 
-          VERSION="${GITHUB_REF_NAME}"
+          VERSION="${GITHUB_SHA::7}"
           ARCHIVE_BASENAME="discord-agent-bot-linux-x86_64-${VERSION}"
           PACKAGE_DIR="${RUNNER_TEMP}/${ARCHIVE_BASENAME}"
 
@@ -43,8 +41,11 @@ jobs:
 
           tar -C "${RUNNER_TEMP}" -czf "${ARCHIVE_BASENAME}.tar.gz" "${ARCHIVE_BASENAME}"
 
-      - name: Publish GitHub Release asset
-        uses: softprops/action-gh-release@v2
+          echo "archive_name=${ARCHIVE_BASENAME}.tar.gz" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: discord-agent-bot-linux-x86_64-${{ github.ref_name }}.tar.gz
-          generate_release_notes: true
+          name: bot-linux-x86_64
+          path: ${{ steps.package.outputs.archive_name }}
+          if-no-files-found: error

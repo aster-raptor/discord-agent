@@ -69,9 +69,8 @@ docker compose exec app npm run dev
 
 ## GitHub Actions
 
-- `.github/workflows/release-bot.yml` は Rust の `bot` バイナリを Linux x86_64 向けにビルドします
-- `main` への push では `cargo test --bin bot --lib` と `cargo build --release --bin bot` を実行し、Actions artifact `bot-linux-x86_64` を作ります
-- `v*` タグの push では同じ成果物を GitHub Release に `discord-agent-bot-linux-x86_64-<version>.tar.gz` として添付します
+- `.github/workflows/ci-bot.yml` は `main` への push で Rust の `bot` バイナリを Linux x86_64 向けにビルドし、Actions artifact `bot-linux-x86_64` を作ります
+- `.github/workflows/release-bot.yml` は `v*` タグの push だけで動き、GitHub Release に `discord-agent-bot-linux-x86_64-<version>.tar.gz` を添付します
 - ダウンロード時は Release asset を展開し、中の `bot` 実行ファイルを使ってください
 - CI 上の Rust ビルドは GitHub Actions runner で直接実行します。ローカル開発用の Docker Compose 方針とは用途が異なります
 
@@ -80,3 +79,4 @@ docker compose exec app npm run dev
 - [Architecture](docs/architecture.md)
 - [Notion and Discord Setup](docs/notion-discord-setup.md)
 - [Vercel Setup](docs/vercel-setup.md)
+
