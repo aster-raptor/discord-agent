@@ -67,6 +67,14 @@ docker compose exec app npm run dev
 - `PUBLIC_BASE_URL` は Vercel の公開URLを指定してください
 - ローカル検証は [Dockerfile.app](Dockerfile.app) と `docker compose` を使います
 
+## GitHub Actions
+
+- `.github/workflows/release-bot.yml` は Rust の `bot` バイナリを Linux x86_64 向けにビルドします
+- `main` への push では `cargo test --bin bot --lib` と `cargo build --release --bin bot` を実行し、Actions artifact `bot-linux-x86_64` を作ります
+- `v*` タグの push では同じ成果物を GitHub Release に `discord-agent-bot-linux-x86_64-<version>.tar.gz` として添付します
+- ダウンロード時は Release asset を展開し、中の `bot` 実行ファイルを使ってください
+- CI 上の Rust ビルドは GitHub Actions runner で直接実行します。ローカル開発用の Docker Compose 方針とは用途が異なります
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)

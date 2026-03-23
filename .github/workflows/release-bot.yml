@@ -1,0 +1,67 @@
+name: Release Rust Bot
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --bin bot --lib
+
+      - name: Build release binary
+        run: cargo build --release --bin bot
+
+      - name: Package release artifact
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            VERSION="${GITHUB_SHA::7}"
+          fi
+
+          ARCHIVE_BASENAME="discord-agent-bot-linux-x86_64-${VERSION}"
+          PACKAGE_DIR="${RUNNER_TEMP}/${ARCHIVE_BASENAME}"
+
+          mkdir -p "${PACKAGE_DIR}"
+          cp target/release/bot "${PACKAGE_DIR}/bot"
+          cp README.md "${PACKAGE_DIR}/README.md"
+
+          tar -C "${RUNNER_TEMP}" -czf "${ARCHIVE_BASENAME}.tar.gz" "${ARCHIVE_BASENAME}"
+
+          echo "archive_name=${ARCHIVE_BASENAME}.tar.gz" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-linux-x86_64
+          path: ${{ steps.package.outputs.archive_name }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.archive_name }}
+          generate_release_notes: true
