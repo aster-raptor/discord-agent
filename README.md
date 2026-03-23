@@ -75,6 +75,27 @@ sudo systemctl restart discord-agent-bot
 - 手順は [Vercel Setup](docs/vercel-setup.md) を参照してください
 - Bot 側の `PUBLIC_BASE_URL` は Vercel の公開 URL と同じ値にしてください
 
+## Discord からの依頼手順
+
+1. Bot を追加した Discord サーバー内でスレッドを開きます。
+2. そのスレッドに、調査したい内容をそのままメッセージで投稿します。
+3. URL を含めると、Bot は本文に加えて `Referenced URLs` として URL 一覧も Codex に渡します。
+4. 受理されると、Discord 上で `Accepted task ... Status: queued` と `Task ID` が返ります。
+5. その後、同じスレッドに `running`、`summarizing`、`completed` または `failed` の進捗が返ります。
+
+依頼メッセージ例:
+
+```text
+このページの内容を調べて、要点を日本語で要約してください。
+https://example.com/article
+```
+
+注意:
+
+- DM は受け付けず、Discord サーバー内のスレッド投稿だけを処理します
+- v1 は research タスク専用です
+- `codex exec`、`コードを書いて`、`fix`、`refactor` を含む依頼は coding タスクとして扱われ、現在は実行されません
+
 ## Binaries
 
 - `bot`: Discordのスレッド投稿を受け取り、内部キューへ積み、Codexを実行し、結果をSQLiteとNotionへ保存します。
