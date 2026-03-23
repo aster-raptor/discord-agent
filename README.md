@@ -2,6 +2,79 @@
 
 DiscordからVPS上のCodex CLIを操作し、調査結果をNotionへ保存しつつ、Vercel上のNext.jsアプリから公開RSSを配信する実装です。
 
+## Quick Start
+
+1. GitHub Releases の最新バージョンを開き、`discord-agent-bot-linux-x86_64-<version>.tar.gz` をダウンロードします。
+
+```bash
+curl -LO https://github.com/aster-raptor/discord-agent/releases/download/v0.1.0/discord-agent-bot-linux-x86_64-v0.1.0.tar.gz
+tar -xzf discord-agent-bot-linux-x86_64-v0.1.0.tar.gz
+cd discord-agent-bot-linux-x86_64-v0.1.0
+```
+
+最新版を使うときは、URL とディレクトリ名の `v0.1.0` を対象バージョンに読み替えてください。
+
+2. Bot に必要な設定を用意します。
+
+- Discord Bot と Notion の初期設定は [Notion and Discord Setup](docs/notion-discord-setup.md) を参照してください
+- 最低限 `DISCORD_TOKEN` を設定してください
+- Notion 連携と公開 URL 連携を使う場合は `NOTION_TOKEN`, `NOTION_TASK_DATABASE_ID`, `PUBLIC_BASE_URL` も設定してください
+
+3. 環境変数を設定して Bot を起動します。
+
+```bash
+export DISCORD_TOKEN=your_discord_token
+export NOTION_TOKEN=your_notion_token
+export NOTION_TASK_DATABASE_ID=your_notion_database_id
+export PUBLIC_BASE_URL=https://your-public-app.example.com
+./bot
+```
+
+Linux 上でデーモンとして動かす場合は systemd service を作成します。
+
+`/etc/systemd/system/discord-agent-bot.service`:
+
+```ini
+[Unit]
+Description=discord-agent bot
+After=network.target
+
+[Service]
+Type=simple
+User=your_user
+WorkingDirectory=/opt/discord-agent-bot-linux-x86_64-v0.1.0
+Environment=DISCORD_TOKEN=your_discord_token
+Environment=NOTION_TOKEN=your_notion_token
+Environment=NOTION_TASK_DATABASE_ID=your_notion_database_id
+Environment=PUBLIC_BASE_URL=https://your-public-app.example.com
+ExecStart=/opt/discord-agent-bot-linux-x86_64-v0.1.0/bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+有効化と起動:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now discord-agent-bot
+sudo systemctl status discord-agent-bot
+```
+
+停止と再起動:
+
+```bash
+sudo systemctl stop discord-agent-bot
+sudo systemctl restart discord-agent-bot
+```
+
+4. 公開 RSS を使う場合は Vercel 側も設定します。
+
+- 手順は [Vercel Setup](docs/vercel-setup.md) を参照してください
+- Bot 側の `PUBLIC_BASE_URL` は Vercel の公開 URL と同じ値にしてください
+
 ## Binaries
 
 - `bot`: Discordのスレッド投稿を受け取り、内部キューへ積み、Codexを実行し、結果をSQLiteとNotionへ保存します。
