@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
 use serde_json::{json, Value};
+use tracing::{error, info};
 
 use crate::config::AppConfig;
 use crate::models::{PublicTaskSummary, TaskRecord};
@@ -53,6 +54,7 @@ impl NotionClient {
         }
 
         let database_id = self.database_id.as_ref().unwrap();
+        info!(task_id = %task.id, notion_database_id = %database_id, "publishing task to notion");
         let summary = truncate(&build_public_summary(task), 1800);
         let details = truncate(&task.raw_output.clone().unwrap_or_default(), 1800);
         let payload = json!({
@@ -85,16 +87,29 @@ impl NotionClient {
             .json(&payload)
             .send()
             .await
-            .context("failed to call notion create page")?
-            .error_for_status()
-            .context("notion create page returned error")?;
+            .context("failed to call notion create page")?;
 
-        let body: Value = response.json().await.context("invalid notion response")?;
+        let status = response.status();
+        let body_text = response
+            .text()
+            .await
+            .context("failed to read notion create page response body")?;
+        if !status.is_success() {
+            error!(task_id = %task.id, http_status = %status, response_body = %body_text, "notion create page returned error");
+            return Err(anyhow!(
+                "notion create page returned error: {} {}",
+                status,
+                body_text
+            ));
+        }
+
+        let body: Value = serde_json::from_str(&body_text).context("invalid notion response")?;
         let page_id = body
             .get("id")
             .and_then(|value| value.as_str())
             .ok_or_else(|| anyhow!("notion response did not include page id"))?;
 
+        info!(task_id = %task.id, notion_page_id = %page_id, "published task to notion");
         Ok(Some(page_id.to_string()))
     }
 
@@ -127,14 +142,24 @@ impl NotionClient {
             .json(&payload)
             .send()
             .await
-            .context("failed to query notion database")?
-            .error_for_status()
-            .context("notion query returned error")?;
+            .context("failed to query notion database")?;
 
-        let body: Value = response
-            .json()
+        let status = response.status();
+        let body_text = response
+            .text()
             .await
-            .context("invalid notion query response")?;
+            .context("failed to read notion query response body")?;
+        if !status.is_success() {
+            error!(http_status = %status, response_body = %body_text, "notion query returned error");
+            return Err(anyhow!(
+                "notion query returned error: {} {}",
+                status,
+                body_text
+            ));
+        }
+
+        let body: Value =
+            serde_json::from_str(&body_text).context("invalid notion query response")?;
         let results = body
             .get("results")
             .and_then(|value| value.as_array())

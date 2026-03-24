@@ -2,7 +2,7 @@
 
 ## 概要
 
-`discord-agent` は、Discord の Slash Command で受け付けた依頼を Rust 製の Bot が処理し、Codex CLI で実行した結果を Notion に保存します。公開面は Rust とは分離されており、Vercel 上の Next.js/TypeScript アプリが Notion を直接参照して RSS と公開ページを配信します。
+`discord-agent` は、Discord の Slash Command で受け付けた依頼を Rust 製の Bot が処理し、Codex CLI で実行した結果を Notion に保存します。Bot は設定済みの特定チャンネル内でのみ command を受け付けます。公開面は Rust とは分離されており、Vercel 上の Next.js/TypeScript アプリが Notion を直接参照して RSS と公開ページを配信します。
 
 - `bot`: Discord の `/research` 依頼を受け付け、SQLite に保存し、ワーカーで Codex を実行する Rust プロセス
 - `public app`: Vercel 上で動作し、Notion に公開済みのタスクを読み出して `/rss.xml` と `/tasks/:task_id` を返す Next.js アプリ
@@ -76,7 +76,7 @@ Next.js 側は stateless で、公開データの正本は Notion です。SQLit
 主要な設定は以下です。
 
 - Rust Bot
-  `DISCORD_TOKEN`, `SQLITE_PATH`, `CODEX_BIN`, `CODEX_MODEL`, `WORKER_CONCURRENCY`, `NOTION_TOKEN`, `NOTION_TASK_DATABASE_ID`, `PUBLIC_BASE_URL`
+  `DISCORD_TOKEN`, `DISCORD_ALLOWED_CHANNEL_IDS`, `SQLITE_PATH`, `CODEX_BIN`, `CODEX_MODEL`, `WORKER_CONCURRENCY`, `NOTION_TOKEN`, `NOTION_TASK_DATABASE_ID`, `PUBLIC_BASE_URL`
 - Next.js Public App
   `NOTION_TOKEN`, `NOTION_TASK_DATABASE_ID`, `PUBLIC_BASE_URL`
 
@@ -86,8 +86,8 @@ Next.js 側は stateless で、公開データの正本は Notion です。SQLit
 
 ### タスク受付から公開まで
 
-1. Discord のスレッドで `/research` を実行する
-2. Rust Bot が command を受け付け、スレッドかどうかを検証する
+1. 許可された Discord チャンネルで `/research` を実行する
+2. Rust Bot が command を受け付け、allowlist に入ったチャンネルか検証する
 3. Bot がタスクを SQLite に保存する
 4. ワーカーが Codex CLI を呼び出す
 5. 完了結果を Bot が Notion に保存する
@@ -97,7 +97,7 @@ Next.js 側は stateless で、公開データの正本は Notion です。SQLit
 
 1. Codex 実行失敗または Notion 連携失敗が発生する
 2. Bot が `failed` を SQLite に保存する
-3. Discord スレッドへ失敗メッセージを返す
+3. Discord チャンネルへ失敗メッセージを返す
 4. Notion に公開されないため RSS にも載らない
 
 ## 外部依存
@@ -115,7 +115,7 @@ Next.js 側は stateless で、公開データの正本は Notion です。SQLit
 
 ## 現状の制約
 
-- `/research` は Discord のサーバー内スレッドのみで実行し、DM は扱わない
+- `/research`, `/status`, `/help` は `DISCORD_ALLOWED_CHANNEL_IDS` に入れたチャンネルのみで実行し、DM は扱わない
 - 通常メッセージは task を作らず、使い方だけを返す
 - v1 では /research による Research タスクのみ処理する
 - 公開面は Notion 依存なので、Notion 障害時は RSS と公開ページも影響を受ける

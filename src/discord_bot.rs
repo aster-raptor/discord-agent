@@ -8,7 +8,7 @@ use serenity::model::application::command::CommandOptionType;
 use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
 use serenity::model::application::interaction::Interaction;
 use serenity::model::application::interaction::InteractionResponseType;
-use serenity::model::channel::{Channel, ChannelType, Message};
+use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
 use serenity::model::id::ChannelId;
 use serenity::prelude::*;
@@ -133,7 +133,7 @@ impl EventHandler for Handler {
             return;
         }
 
-        if !is_thread_message(&ctx, &msg).await {
+        if !is_allowed_channel(&self.state.config, msg.channel_id) {
             return;
         }
 
@@ -145,10 +145,17 @@ impl EventHandler for Handler {
             return;
         };
 
+        info!(
+            command = %command.data.name,
+            channel_id = command.channel_id.0,
+            guild_id = ?command.guild_id.map(|id| id.0),
+            user_id = command.user.id.0,
+            "received slash command"
+        );
         let result = match command.data.name.as_str() {
             "research" => handle_research_command(&self.state, &ctx, &command).await,
             "status" => handle_status_command(&self.state, &ctx, &command).await,
-            "help" => handle_help_command(&ctx, &command).await,
+            "help" => handle_help_command(&self.state, &ctx, &command).await,
             _ => Ok(()),
         };
 
@@ -175,7 +182,7 @@ async fn register_commands(ctx: &Context) -> Result<()> {
             .create_application_command(|command| {
                 command
                     .name("research")
-                    .description("Queue a research task from the current thread")
+                    .description("Queue a research task from the current channel")
                     .create_option(|option| {
                         option
                             .name("prompt")
@@ -213,17 +220,11 @@ async fn handle_research_command(
     command: &ApplicationCommandInteraction,
 ) -> Result<()> {
     if command.guild_id.is_none() {
-        respond_ephemeral(ctx, command, "Use `/research` inside a server thread.").await?;
+        respond_ephemeral(ctx, command, "Use this bot inside an allowed server channel.").await?;
         return Ok(());
     }
 
-    if !is_thread_channel(ctx, command.channel_id).await {
-        respond_ephemeral(
-            ctx,
-            command,
-            "Use `/research` inside a Discord thread. Use `/help` for details.",
-        )
-        .await?;
+    if !ensure_allowed_channel(state, ctx, command).await? {
         return Ok(());
     }
 
@@ -242,6 +243,12 @@ async fn handle_research_command(
         prompt,
         TaskType::Research,
     );
+    info!(
+        task_id = %task.id,
+        channel_id = task.channel_id,
+        title = %task.title,
+        "created research task from slash command"
+    );
 
     if let Err(error) = state.database.insert_task(&task) {
         error!("failed to insert task: {:?}", error);
@@ -256,6 +263,7 @@ async fn handle_research_command(
         error!("failed to queue task status: {:?}", error);
     }
     task.status = TaskStatus::Queued;
+    info!(task_id = %task.id, "queued task");
 
     if let Err(error) = state
         .tx
@@ -282,10 +290,19 @@ async fn handle_status_command(
     ctx: &Context,
     command: &ApplicationCommandInteraction,
 ) -> Result<()> {
+    if command.guild_id.is_none() {
+        respond_ephemeral(ctx, command, "Use this bot inside an allowed server channel.").await?;
+        return Ok(());
+    }
+    if !ensure_allowed_channel(state, ctx, command).await? {
+        return Ok(());
+    }
+
     let Some(task_id) = command_option_string(command, "task_id") else {
         respond_ephemeral(ctx, command, "Missing required option: task_id").await?;
         return Ok(());
     };
+    info!(task_id = %task_id, "received status lookup");
 
     match state.database.get_task(&task_id) {
         Ok(task) => {
@@ -300,8 +317,43 @@ async fn handle_status_command(
     Ok(())
 }
 
-async fn handle_help_command(ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+async fn handle_help_command(
+    state: &Arc<BotState>,
+    ctx: &Context,
+    command: &ApplicationCommandInteraction,
+) -> Result<()> {
+    if command.guild_id.is_none() {
+        respond_ephemeral(ctx, command, "Use this bot inside an allowed server channel.").await?;
+        return Ok(());
+    }
+    if !ensure_allowed_channel(state, ctx, command).await? {
+        return Ok(());
+    }
     respond_ephemeral(ctx, command, usage_message()).await
+}
+
+async fn ensure_allowed_channel(
+    state: &Arc<BotState>,
+    ctx: &Context,
+    command: &ApplicationCommandInteraction,
+) -> Result<bool> {
+    if is_allowed_channel(&state.config, command.channel_id) {
+        return Ok(true);
+    }
+
+    warn!(
+        command = %command.data.name,
+        channel_id = command.channel_id.0,
+        allowed_channel_ids = ?state.config.discord_allowed_channel_ids,
+        "rejected slash command from disallowed channel"
+    );
+    respond_ephemeral(
+        ctx,
+        command,
+        "This bot can only be used in configured Discord channels.",
+    )
+    .await?;
+    Ok(false)
 }
 
 async fn respond_public(
@@ -358,6 +410,7 @@ async fn worker_loop(worker_id: usize, state: WorkerState) -> Result<()> {
                 continue;
             }
         };
+        info!(worker_id, task_id = %task.id, "starting task execution");
 
         state
             .progress
@@ -391,6 +444,13 @@ async fn handle_task_completion(
 ) -> Result<()> {
     match output {
         Ok(output) => {
+            info!(
+                task_id = %task.id,
+                stdout_len = output.stdout.len(),
+                stderr_len = output.stderr.len(),
+                success = output.success,
+                "codex execution finished"
+            );
             if !output.success {
                 let raw_output = render_raw_output(&output);
                 state.database.fail_task(
@@ -428,6 +488,7 @@ async fn handle_task_completion(
             task.completed_at = Some(task.updated_at.clone());
             task.publish = true;
 
+            info!(task_id = %task.id, "saving completed task to notion");
             let notion_page_id = state.notion.publish_task(&task).await?;
             state.database.complete_task(
                 &task.id,
@@ -436,6 +497,11 @@ async fn handle_task_completion(
                 notion_page_id.as_deref(),
                 true,
             )?;
+            info!(
+                task_id = %task.id,
+                notion_page_id = ?notion_page_id,
+                "task completed successfully"
+            );
 
             let completion_message = format!(
                 "Task `{}` completed.\nPublic summary:\n{}",
@@ -449,6 +515,7 @@ async fn handle_task_completion(
         }
         Err(error) => {
             let message = error.to_string();
+            error!(task_id = %task.id, error = %message, "task execution failed");
             state.database.fail_task(&task.id, &message, None)?;
             state
                 .progress
@@ -492,18 +559,11 @@ fn truncate_for_discord(value: &str) -> String {
     result
 }
 
-async fn is_thread_message(ctx: &Context, msg: &Message) -> bool {
-    is_thread_channel(ctx, msg.channel_id).await
-}
-
-async fn is_thread_channel(ctx: &Context, channel_id: ChannelId) -> bool {
-    match channel_id.to_channel(&ctx.http).await {
-        Ok(Channel::Guild(channel)) => matches!(
-            channel.kind,
-            ChannelType::PublicThread | ChannelType::PrivateThread | ChannelType::NewsThread
-        ),
-        _ => false,
-    }
+fn is_allowed_channel(config: &AppConfig, channel_id: ChannelId) -> bool {
+    config
+        .discord_allowed_channel_ids
+        .iter()
+        .any(|allowed| *allowed == channel_id.0)
 }
 
 fn command_option_string(
@@ -521,7 +581,7 @@ fn command_option_string(
 }
 
 fn usage_message() -> &'static str {
-    "Use `/research` to start a task in this thread.\nUse `/status` to check a Task ID.\nUse `/help` to show this message."
+    "Use `/research` to start a task in this channel.\nUse `/status` to check a Task ID.\nUse `/help` to show this message."
 }
 
 fn render_task_status(task: &TaskRecord) -> String {

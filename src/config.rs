@@ -5,7 +5,9 @@ use anyhow::{anyhow, Result};
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub discord_token: String,
+    pub discord_allowed_channel_ids: Vec<u64>,
     pub sqlite_path: String,
+    pub log_file_path: String,
     pub codex_bin: String,
     pub codex_model: Option<String>,
     pub worker_concurrency: usize,
@@ -18,8 +20,14 @@ impl AppConfig {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             discord_token: env::var("DISCORD_TOKEN").unwrap_or_default(),
+            discord_allowed_channel_ids: env::var("DISCORD_ALLOWED_CHANNEL_IDS")
+                .ok()
+                .map(|value| parse_u64_list(&value))
+                .unwrap_or_default(),
             sqlite_path: env::var("SQLITE_PATH")
                 .unwrap_or_else(|_| "data/discord-agent.sqlite3".to_string()),
+            log_file_path: env::var("LOG_FILE_PATH")
+                .unwrap_or_else(|_| "logs/discord-agent.log".to_string()),
             codex_bin: env::var("CODEX_BIN").unwrap_or_else(|_| "codex".to_string()),
             codex_model: env::var("CODEX_MODEL")
                 .ok()
@@ -44,7 +52,17 @@ impl AppConfig {
         if self.discord_token.is_empty() {
             return Err(anyhow!("DISCORD_TOKEN is required"));
         }
+        if self.discord_allowed_channel_ids.is_empty() {
+            return Err(anyhow!("DISCORD_ALLOWED_CHANNEL_IDS is required"));
+        }
 
         Ok(())
     }
+}
+
+fn parse_u64_list(value: &str) -> Vec<u64> {
+    value
+        .split(',')
+        .filter_map(|item| item.trim().parse::<u64>().ok())
+        .collect()
 }

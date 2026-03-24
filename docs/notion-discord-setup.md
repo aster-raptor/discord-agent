@@ -26,6 +26,7 @@
 
 ```text
 DISCORD_TOKEN=xxxxxxxxxxxxxxxx
+DISCORD_ALLOWED_CHANNEL_IDS=123456789012345678
 ```
 
 ### 1-2. Privileged Gateway Intents
@@ -54,19 +55,19 @@ Bot Permissions の最低限:
 - `View Channels`
 - `Send Messages`
 - `Read Message History`
-- `Send Messages in Threads`
 
-この Bot は既存スレッド内の投稿を読む前提なので、主にスレッド内の読み書きができれば十分です。
+
+この Bot は指定チャンネル内で Slash Command を受け付けるため、通常チャンネルの読み書きができれば十分です。
 
 ## 2. Discord 側の利用前提
 
-Bot は以下の条件を満たす投稿だけを処理します。
+Bot は以下の条件を満たす command だけを処理します。
 
 - DM ではない
-- Discord サーバー内のメッセージである
-- スレッド内の投稿である
+- Discord サーバー内の command である
+- `DISCORD_ALLOWED_CHANNEL_IDS` に入っているチャンネルで実行されている
 
-つまり、通常のテキストチャンネル直下の投稿は処理されません。依頼はスレッド内で行ってください。
+つまり、許可されていないチャンネルや DM では処理されません。依頼は許可チャンネル内で行ってください。
 
 また、現状の v1 では `research` タスクのみ実行し、`coding` と判定される内容は拒否されます。
 
@@ -122,6 +123,7 @@ NOTION_TASK_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ```text
 DISCORD_TOKEN=xxxxxxxxxxxxxxxx
+DISCORD_ALLOWED_CHANNEL_IDS=123456789012345678
 NOTION_TOKEN=secret_xxx
 NOTION_TASK_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 PUBLIC_BASE_URL=https://your-project.vercel.app
@@ -141,6 +143,7 @@ WORKER_CONCURRENCY=1
 - `PUBLIC_BASE_URL` は Vercel 側の公開 URL に合わせる
 - これにより Notion の `Public URL` が `https://<domain>/tasks/<task_id>` で記録される
 - `WORKER_CONCURRENCY` は同時実行数
+- `DISCORD_ALLOWED_CHANNEL_IDS` は Bot 利用を許可するチャンネル ID のカンマ区切り
 
 ## 5. ローカルまたは運用環境での確認
 
@@ -154,7 +157,7 @@ docker compose run --rm app cargo test
 起動後の確認ポイント:
 
 - Bot が Discord に online 表示される
-- スレッド内で `/research` を実行すると `Accepted task` が返る
+- 許可チャンネル内で `/research` を実行すると `Accepted task` が返る
 - 完了後、Notion にページが作成される
 - `Publish=true` の完了タスクに `Public URL` が入る
 
@@ -174,12 +177,13 @@ docker compose run --rm app cargo test
 
 原因候補:
 
-- `/research` をスレッド外で実行している
+- `/research` を許可されていないチャンネルで実行している
 - `MESSAGE CONTENT INTENT` が無効
 
 対応:
 
-- スレッド内で `/research` を使う
+- `DISCORD_ALLOWED_CHANNEL_IDS` に対象チャンネル ID を設定する
+- 許可チャンネル内で `/research` を使う
 - Developer Portal で intent を有効にする
 
 ### Notion にページが作成されない

@@ -20,15 +20,19 @@ cd discord-agent-bot
 
 - Discord Bot と Notion の初期設定は [Notion and Discord Setup](docs/notion-discord-setup.md) を参照してください
 - 最低限 `DISCORD_TOKEN` を設定してください
+- `DISCORD_ALLOWED_CHANNEL_IDS` に利用を許可するチャンネル ID を設定してください
 - Notion 連携と公開 URL 連携を使う場合は `NOTION_TOKEN`, `NOTION_TASK_DATABASE_ID`, `PUBLIC_BASE_URL` も設定してください
 
 3. 環境変数を設定して Bot を起動します。
 
 ```bash
 export DISCORD_TOKEN=your_discord_token
+export DISCORD_ALLOWED_CHANNEL_IDS=123456789012345678
 export NOTION_TOKEN=your_notion_token
 export NOTION_TASK_DATABASE_ID=your_notion_database_id
 export PUBLIC_BASE_URL=https://your-public-app.example.com
+export LOG_FILE_PATH=logs/discord-agent.log
+export RUST_LOG=info
 ./bot
 ```
 
@@ -46,9 +50,12 @@ Type=simple
 User=your_user
 WorkingDirectory=/opt/discord-agent-bot
 Environment=DISCORD_TOKEN=your_discord_token
+Environment=DISCORD_ALLOWED_CHANNEL_IDS=123456789012345678
 Environment=NOTION_TOKEN=your_notion_token
 Environment=NOTION_TASK_DATABASE_ID=your_notion_database_id
 Environment=PUBLIC_BASE_URL=https://your-public-app.example.com
+Environment=LOG_FILE_PATH=/opt/discord-agent-bot/logs/discord-agent.log
+Environment=RUST_LOG=info
 ExecStart=/opt/discord-agent-bot/bot
 Restart=always
 RestartSec=5
@@ -72,6 +79,13 @@ sudo systemctl stop discord-agent-bot
 sudo systemctl restart discord-agent-bot
 ```
 
+ログ確認:
+
+```bash
+sudo journalctl -u discord-agent-bot -f
+tail -f /opt/discord-agent-bot/logs/discord-agent.log
+```
+
 4. 公開 RSS を使う場合は Vercel 側も設定します。
 
 - 手順は [Vercel Setup](docs/vercel-setup.md) を参照してください
@@ -79,11 +93,11 @@ sudo systemctl restart discord-agent-bot
 
 ## Discord からの依頼手順
 
-1. Bot を追加した Discord サーバー内でスレッドを開きます。
-2. スレッド内で `/research` を実行し、`prompt` に調査したい内容を入力します。
+1. `DISCORD_ALLOWED_CHANNEL_IDS` に設定した Discord チャンネルを開きます。
+2. そのチャンネル内で `/research` を実行し、`prompt` に調査したい内容を入力します。
 3. URL を含めると、Bot は本文に加えて `Referenced URLs` として URL 一覧も Codex に渡します。
 4. 受理されると、Discord 上で `Accepted task ... Status: queued` と `Task ID` が返ります。
-5. その後、同じスレッドに `running`、`summarizing`、`completed` または `failed` の進捗が返ります。
+5. その後、同じチャンネルに `running`、`summarizing`、`completed` または `failed` の進捗が返ります。
 6. Task ID の確認には `/status task_id:<id>` を使い、使い方確認には `/help` を使います。
 
 `/research` の入力例:
@@ -95,8 +109,9 @@ https://example.com/article
 
 注意:
 
-- `/research` は DM では受け付けず、Discord サーバー内のスレッドでのみ実行します
-- スレッド内の通常メッセージは task にせず、使い方だけを返します
+- `/research` は DM では受け付けず、`DISCORD_ALLOWED_CHANNEL_IDS` に入れたチャンネルでのみ実行します
+- 許可されていないチャンネルでの Slash Command は拒否されます
+- 通常メッセージは task にせず、使い方だけを返します
 - v1 は research タスク専用です
 - `/status` と `/help` は task を作りません
 
@@ -113,6 +128,8 @@ https://example.com/article
 - `CODEX_BIN`: Codex CLIバイナリ名。既定値は `codex`
 - `CODEX_MODEL`: 任意。Codex CLIへ `--model` で渡す
 - `WORKER_CONCURRENCY`: ワーカー数。既定値は `1`
+- `LOG_FILE_PATH`: ログファイルパス。既定値は `logs/discord-agent.log`
+- `RUST_LOG`: ログレベル。既定値は `info`
 - `NOTION_TOKEN`: 任意。設定時のみNotion書き込み/読み出しを有効化
 - `NOTION_TASK_DATABASE_ID`: 任意。Notion Task DBのID
 - `PUBLIC_BASE_URL`: 公開RSSアプリの公開ベースURL。既定値は `http://localhost:3000`
@@ -120,6 +137,7 @@ https://example.com/article
 ### Discord bot
 
 - `DISCORD_TOKEN`: 必須
+- `DISCORD_ALLOWED_CHANNEL_IDS`: 必須。利用を許可する Discord チャンネル ID のカンマ区切り
 
 ## Notion database properties
 
@@ -156,6 +174,7 @@ docker compose exec app npm run dev
 - /research で research タスクを受け付けます
 - /status と /help を提供します
 - 一人利用前提のため、Discord内の追加認可制御は行いません
+- `DISCORD_ALLOWED_CHANNEL_IDS` に入れたチャンネルだけで Slash Command を受け付けます
 - 通常メッセージは task にせず、使い方だけを返します
 - v1では research タスクのみ実行します
 - Codex実行結果の要約をNotionへ保存し、`Publish=true` の完了タスクのみRSSに載せます
