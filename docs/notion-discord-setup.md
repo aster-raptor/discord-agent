@@ -154,7 +154,7 @@ docker compose run --rm app cargo test
 起動後の確認ポイント:
 
 - Bot が Discord に online 表示される
-- スレッド内で投稿すると `Accepted task` が返る
+- スレッド内で `/research` を実行すると `Accepted task` が返る
 - 完了後、Notion にページが作成される
 - `Publish=true` の完了タスクに `Public URL` が入る
 
@@ -174,12 +174,12 @@ docker compose run --rm app cargo test
 
 原因候補:
 
-- スレッド外の投稿をしている
+- `/research` をスレッド外で実行している
 - `MESSAGE CONTENT INTENT` が無効
 
 対応:
 
-- スレッド内で投稿する
+- スレッド内で `/research` を使う
 - Developer Portal で intent を有効にする
 
 ### Notion にページが作成されない

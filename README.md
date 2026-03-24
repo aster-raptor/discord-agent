@@ -78,12 +78,13 @@ sudo systemctl restart discord-agent-bot
 ## Discord からの依頼手順
 
 1. Bot を追加した Discord サーバー内でスレッドを開きます。
-2. そのスレッドに、調査したい内容をそのままメッセージで投稿します。
+2. スレッド内で `/research` を実行し、`prompt` に調査したい内容を入力します。
 3. URL を含めると、Bot は本文に加えて `Referenced URLs` として URL 一覧も Codex に渡します。
 4. 受理されると、Discord 上で `Accepted task ... Status: queued` と `Task ID` が返ります。
 5. その後、同じスレッドに `running`、`summarizing`、`completed` または `failed` の進捗が返ります。
+6. Task ID の確認には `/status task_id:<id>` を使い、使い方確認には `/help` を使います。
 
-依頼メッセージ例:
+`/research` の入力例:
 
 ```text
 このページの内容を調べて、要点を日本語で要約してください。
@@ -92,13 +93,14 @@ https://example.com/article
 
 注意:
 
-- DM は受け付けず、Discord サーバー内のスレッド投稿だけを処理します
+- `/research` は DM では受け付けず、Discord サーバー内のスレッドでのみ実行します
+- スレッド内の通常メッセージは task にせず、使い方だけを返します
 - v1 は research タスク専用です
-- `codex exec`、`コードを書いて`、`fix`、`refactor` を含む依頼は coding タスクとして扱われ、現在は実行されません
+- `/status` と `/help` は task を作りません
 
 ## Binaries
 
-- `bot`: Discordのスレッド投稿を受け取り、内部キューへ積み、Codexを実行し、結果をSQLiteとNotionへ保存します。
+- `bot`: Discord の Slash Command を受け取り、内部キューへ積み、Codexを実行し、結果をSQLiteとNotionへ保存します。
 - `public app`: Vercel上で動作する Next.js/TypeScript アプリです。Notionの公開対象タスクを直接読み出して `/rss.xml` と `/tasks/:task_id` を公開します。
 
 ## Environment variables
@@ -149,9 +151,11 @@ docker compose exec app npm run dev
 
 ## Current v1 behavior
 
-- Discordのスレッド内投稿のみ処理します
+- /research で research タスクを受け付けます
+- /status と /help を提供します
 - 一人利用前提のため、Discord内の追加認可制御は行いません
-- v1では research系タスクのみ実行し、coding系は将来の承認フロー用に予約されています
+- 通常メッセージは task にせず、使い方だけを返します
+- v1では research タスクのみ実行します
 - Codex実行結果の要約をNotionへ保存し、`Publish=true` の完了タスクのみRSSに載せます
 
 ## Vercel

@@ -3,6 +3,11 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use serenity::async_trait;
 use serenity::http::Http;
+use serenity::model::application::command::Command;
+use serenity::model::application::command::CommandOptionType;
+use serenity::model::application::interaction::application_command::ApplicationCommandInteraction;
+use serenity::model::application::interaction::Interaction;
+use serenity::model::application::interaction::InteractionResponseType;
 use serenity::model::channel::{Channel, ChannelType, Message};
 use serenity::model::gateway::Ready;
 use serenity::model::id::ChannelId;
@@ -113,6 +118,9 @@ impl DiscordProgressReporter {
 impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         self.state.progress.set_http(ctx.http.clone()).await;
+        if let Err(error) = register_commands(&ctx).await {
+            error!("failed to register application commands: {:?}", error);
+        }
         info!("connected as {}", ready.user.name);
     }
 
@@ -129,62 +137,203 @@ impl EventHandler for Handler {
             return;
         }
 
-        let task_type = infer_task_type(&msg.content);
-        if matches!(task_type, TaskType::Coding) {
-            let _ = msg
-                .reply(
-                    &ctx.http,
-                    "Coding tasks are wired for future approval flow, but v1 currently executes research tasks only.",
-                )
-                .await;
-            return;
-        }
-
-        let title = build_title(&msg.content);
-        let prompt = build_prompt_from_message(&msg.content);
-        let mut task = TaskRecord::new(
-            msg.channel_id.0,
-            msg.channel_id.0,
-            msg.id.0,
-            title,
-            prompt,
-            task_type,
-        );
-
-        if let Err(error) = self.state.database.insert_task(&task) {
-            error!("failed to insert task: {:?}", error);
-            let _ = msg.reply(&ctx.http, "Failed to persist task.").await;
-            return;
-        }
-
-        if let Err(error) =
-            self.state
-                .database
-                .update_status(&task.id, TaskStatus::Queued, Some("task queued"))
-        {
-            error!("failed to queue task status: {:?}", error);
-        }
-        task.status = TaskStatus::Queued;
-
-        if let Err(error) = self
-            .state
-            .tx
-            .send(TaskJob {
-                task_id: task.id.clone(),
-            })
-            .await
-        {
-            error!("failed to enqueue task: {:?}", error);
-            let _ = msg.reply(&ctx.http, "Failed to enqueue task.").await;
-            return;
-        }
-
-        let queue_message = format!(
-            "Accepted task `{}`.\nStatus: queued\nTask ID: `{}`",
-            task.title, task.id
-        );
-        let _ = msg.reply(&ctx.http, queue_message).await;
+        let _ = msg.reply(&ctx.http, usage_message()).await;
     }
+
+    async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+        let Interaction::ApplicationCommand(command) = interaction else {
+            return;
+        };
+
+        let result = match command.data.name.as_str() {
+            "research" => handle_research_command(&self.state, &ctx, &command).await,
+            "status" => handle_status_command(&self.state, &ctx, &command).await,
+            "help" => handle_help_command(&ctx, &command).await,
+            _ => Ok(()),
+        };
+
+        if let Err(error) = result {
+            error!("failed to handle interaction {}: {:?}", command.data.name, error);
+            let _ = command
+                .create_interaction_response(&ctx.http, |response| {
+                    response
+                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|message| {
+                            message
+                                .content("Failed to handle command.")
+                                .ephemeral(true)
+                        })
+                })
+                .await;
+        }
+    }
+}
+
+async fn register_commands(ctx: &Context) -> Result<()> {
+    Command::set_global_application_commands(&ctx.http, |commands| {
+        commands
+            .create_application_command(|command| {
+                command
+                    .name("research")
+                    .description("Queue a research task from the current thread")
+                    .create_option(|option| {
+                        option
+                            .name("prompt")
+                            .description("Research request")
+                            .kind(CommandOptionType::String)
+                            .required(true)
+                    })
+            })
+            .create_application_command(|command| {
+                command
+                    .name("status")
+                    .description("Show the current status of a task")
+                    .create_option(|option| {
+                        option
+                            .name("task_id")
+                            .description("Task ID to inspect")
+                            .kind(CommandOptionType::String)
+                            .required(true)
+                    })
+            })
+            .create_application_command(|command| {
+                command
+                    .name("help")
+                    .description("Show available bot commands")
+            })
+    })
+    .await
+    .context("failed to register global application commands")?;
+    Ok(())
+}
+
+async fn handle_research_command(
+    state: &Arc<BotState>,
+    ctx: &Context,
+    command: &ApplicationCommandInteraction,
+) -> Result<()> {
+    if command.guild_id.is_none() {
+        respond_ephemeral(ctx, command, "Use `/research` inside a server thread.").await?;
+        return Ok(());
+    }
+
+    if !is_thread_channel(ctx, command.channel_id).await {
+        respond_ephemeral(
+            ctx,
+            command,
+            "Use `/research` inside a Discord thread. Use `/help` for details.",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let Some(prompt) = command_option_string(command, "prompt") else {
+        respond_ephemeral(ctx, command, "Missing required option: prompt").await?;
+        return Ok(());
+    };
+
+    let title = build_title(&prompt);
+    let prompt = build_prompt_from_message(&prompt);
+    let mut task = TaskRecord::new(
+        command.channel_id.0,
+        command.channel_id.0,
+        command.id.0,
+        title,
+        prompt,
+        TaskType::Research,
+    );
+
+    if let Err(error) = state.database.insert_task(&task) {
+        error!("failed to insert task: {:?}", error);
+        respond_ephemeral(ctx, command, "Failed to persist task.").await?;
+        return Ok(());
+    }
+
+    if let Err(error) = state
+        .database
+        .update_status(&task.id, TaskStatus::Queued, Some("task queued"))
+    {
+        error!("failed to queue task status: {:?}", error);
+    }
+    task.status = TaskStatus::Queued;
+
+    if let Err(error) = state
+        .tx
+        .send(TaskJob {
+            task_id: task.id.clone(),
+        })
+        .await
+    {
+        error!("failed to enqueue task: {:?}", error);
+        respond_ephemeral(ctx, command, "Failed to enqueue task.").await?;
+        return Ok(());
+    }
+
+    let queue_message = format!(
+        "Accepted task `{}`.\nStatus: queued\nTask ID: `{}`",
+        task.title, task.id
+    );
+    respond_public(ctx, command, &queue_message).await?;
+    Ok(())
+}
+
+async fn handle_status_command(
+    state: &Arc<BotState>,
+    ctx: &Context,
+    command: &ApplicationCommandInteraction,
+) -> Result<()> {
+    let Some(task_id) = command_option_string(command, "task_id") else {
+        respond_ephemeral(ctx, command, "Missing required option: task_id").await?;
+        return Ok(());
+    };
+
+    match state.database.get_task(&task_id) {
+        Ok(task) => {
+            let message = render_task_status(&task);
+            respond_ephemeral(ctx, command, &message).await?;
+        }
+        Err(_) => {
+            respond_ephemeral(ctx, command, &format!("Task not found: `{}`", task_id)).await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_help_command(ctx: &Context, command: &ApplicationCommandInteraction) -> Result<()> {
+    respond_ephemeral(ctx, command, usage_message()).await
+}
+
+async fn respond_public(
+    ctx: &Context,
+    command: &ApplicationCommandInteraction,
+    content: &str,
+) -> Result<()> {
+    command
+        .create_interaction_response(&ctx.http, |response| {
+            response
+                .kind(InteractionResponseType::ChannelMessageWithSource)
+                .interaction_response_data(|message| message.content(content))
+        })
+        .await
+        .context("failed to send public interaction response")?;
+    Ok(())
+}
+
+async fn respond_ephemeral(
+    ctx: &Context,
+    command: &ApplicationCommandInteraction,
+    content: &str,
+) -> Result<()> {
+    command
+        .create_interaction_response(&ctx.http, |response| {
+            response
+                .kind(InteractionResponseType::ChannelMessageWithSource)
+                .interaction_response_data(|message| message.content(content).ephemeral(true))
+        })
+        .await
+        .context("failed to send ephemeral interaction response")?;
+    Ok(())
 }
 
 async fn worker_loop(worker_id: usize, state: WorkerState) -> Result<()> {
@@ -344,7 +493,11 @@ fn truncate_for_discord(value: &str) -> String {
 }
 
 async fn is_thread_message(ctx: &Context, msg: &Message) -> bool {
-    match msg.channel(&ctx.http).await {
+    is_thread_channel(ctx, msg.channel_id).await
+}
+
+async fn is_thread_channel(ctx: &Context, channel_id: ChannelId) -> bool {
+    match channel_id.to_channel(&ctx.http).await {
         Ok(Channel::Guild(channel)) => matches!(
             channel.kind,
             ChannelType::PublicThread | ChannelType::PrivateThread | ChannelType::NewsThread
@@ -353,16 +506,47 @@ async fn is_thread_message(ctx: &Context, msg: &Message) -> bool {
     }
 }
 
-fn infer_task_type(content: &str) -> TaskType {
-    let lowered = content.to_ascii_lowercase();
-    if lowered.contains("codex exec")
-        || lowered.contains("コードを書いて")
-        || lowered.contains("fix ")
-        || lowered.contains("refactor")
-    {
-        return TaskType::Coding;
+fn command_option_string(
+    command: &ApplicationCommandInteraction,
+    option_name: &str,
+) -> Option<String> {
+    command
+        .data
+        .options
+        .iter()
+        .find(|option| option.name == option_name)
+        .and_then(|option| option.value.as_ref())
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+}
+
+fn usage_message() -> &'static str {
+    "Use `/research` to start a task in this thread.\nUse `/status` to check a Task ID.\nUse `/help` to show this message."
+}
+
+fn render_task_status(task: &TaskRecord) -> String {
+    let mut message = format!(
+        "Task ID: `{}`\nTitle: {}\nStatus: {}",
+        task.id,
+        task.title,
+        task.status.as_str()
+    );
+
+    match task.status {
+        TaskStatus::Completed => {
+            if let Some(summary) = &task.public_summary {
+                message.push_str(&format!("\nSummary:\n{}", truncate_for_discord(summary)));
+            }
+        }
+        TaskStatus::Failed => {
+            if let Some(error_text) = &task.error_text {
+                message.push_str(&format!("\nError:\n{}", truncate_for_discord(error_text)));
+            }
+        }
+        _ => {}
     }
-    TaskType::Research
+
+    message
 }
 
 fn build_title(content: &str) -> String {
@@ -409,7 +593,8 @@ fn extract_urls(content: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_prompt_from_message, extract_urls};
+    use super::{build_prompt_from_message, extract_urls, render_task_status, usage_message};
+    use crate::models::{TaskRecord, TaskStatus, TaskType};
 
     #[test]
     fn extracts_urls_from_message() {
@@ -421,5 +606,22 @@ mod tests {
     fn keeps_prompt_and_url_section() {
         let prompt = build_prompt_from_message("summarize https://example.com");
         assert!(prompt.contains("Referenced URLs"));
+    }
+
+    #[test]
+    fn usage_mentions_all_commands() {
+        let usage = usage_message();
+        assert!(usage.contains("/research"));
+        assert!(usage.contains("/status"));
+        assert!(usage.contains("/help"));
+    }
+
+    #[test]
+    fn completed_status_includes_summary() {
+        let mut task = TaskRecord::new(1, 1, 1, "hello".into(), "prompt".into(), TaskType::Research);
+        task.status = TaskStatus::Completed;
+        task.public_summary = Some("done".into());
+        let message = render_task_status(&task);
+        assert!(message.contains("done"));
     }
 }
