@@ -20,10 +20,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --bin bot --lib
+        run: cargo test --bins --lib
 
-      - name: Build release binary
-        run: cargo build --release --bin bot
+      - name: Build release binaries
+        run: cargo build --release --bin bot --bin agent-cli
 
       - name: Package workflow artifact
         id: package
@@ -37,6 +37,7 @@ jobs:
 
           mkdir -p "${PACKAGE_DIR}"
           cp target/release/bot "${PACKAGE_DIR}/bot"
+          cp target/release/agent-cli "${PACKAGE_DIR}/agent-cli"
           cp README.md "${PACKAGE_DIR}/README.md"
 
           tar -C "${RUNNER_TEMP}" -czf "${ARCHIVE_BASENAME}.tar.gz" "${ARCHIVE_BASENAME}"

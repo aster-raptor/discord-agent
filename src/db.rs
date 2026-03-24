@@ -47,12 +47,15 @@ impl Database {
                 discord_message_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 prompt TEXT NOT NULL,
+                input_source_path TEXT,
+                input_payload TEXT,
                 task_type TEXT NOT NULL,
                 status TEXT NOT NULL,
                 publish INTEGER NOT NULL DEFAULT 0,
                 public_summary TEXT,
                 raw_output TEXT,
                 notion_page_id TEXT,
+                notion_page_url TEXT,
                 error_text TEXT,
                 started_at TEXT,
                 completed_at TEXT,
@@ -87,6 +90,9 @@ impl Database {
             );
             "#,
         )?;
+        ensure_column(&connection, "tasks", "input_source_path", "TEXT")?;
+        ensure_column(&connection, "tasks", "input_payload", "TEXT")?;
+        ensure_column(&connection, "tasks", "notion_page_url", "TEXT")?;
         Ok(())
     }
 
@@ -96,9 +102,10 @@ impl Database {
             r#"
             INSERT INTO tasks (
                 id, thread_id, channel_id, guild_id, requester_id, discord_message_id,
-                title, prompt, task_type, status, publish, public_summary, raw_output,
-                notion_page_id, error_text, started_at, completed_at, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+                title, prompt, input_source_path, input_payload, task_type, status, publish,
+                public_summary, raw_output, notion_page_id, notion_page_url, error_text, started_at, completed_at,
+                created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
             "#,
             params![
                 &task.id,
@@ -109,12 +116,15 @@ impl Database {
                 task.discord_message_id.to_string(),
                 &task.title,
                 &task.prompt,
+                &task.input_source_path,
+                &task.input_payload,
                 task.task_type.as_str(),
                 task.status.as_str(),
                 bool_to_sql(task.publish),
                 &task.public_summary,
                 &task.raw_output,
                 &task.notion_page_id,
+                &task.notion_page_url,
                 &task.error_text,
                 &task.started_at,
                 &task.completed_at,
@@ -205,6 +215,7 @@ impl Database {
         public_summary: &str,
         raw_output: &str,
         notion_page_id: Option<&str>,
+        notion_page_url: Option<&str>,
         publish: bool,
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
@@ -216,16 +227,18 @@ impl Database {
                 public_summary = ?2,
                 raw_output = ?3,
                 notion_page_id = COALESCE(?4, notion_page_id),
-                publish = ?5,
-                completed_at = ?6,
-                updated_at = ?6
-            WHERE id = ?7
+                notion_page_url = COALESCE(?5, notion_page_url),
+                publish = ?6,
+                completed_at = ?7,
+                updated_at = ?7
+            WHERE id = ?8
             "#,
             params![
                 TaskStatus::Completed.as_str(),
                 public_summary,
                 raw_output,
                 notion_page_id,
+                notion_page_url,
                 bool_to_sql(publish),
                 now,
                 task_id
@@ -282,8 +295,8 @@ impl Database {
             .query_row(
                 r#"
                 SELECT id, thread_id, channel_id, discord_message_id, title, prompt,
-                       task_type, status, publish, public_summary, raw_output, notion_page_id, error_text,
-                       started_at, completed_at, created_at, updated_at
+                       input_source_path, input_payload, task_type, status, publish, public_summary,
+                       raw_output, notion_page_id, notion_page_url, error_text, started_at, completed_at, created_at, updated_at
                 FROM tasks
                 WHERE id = ?1
                 "#,
@@ -333,18 +346,37 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         discord_message_id: row.get::<_, String>(3)?.parse().unwrap_or_default(),
         title: row.get(4)?,
         prompt: row.get(5)?,
-        task_type: TaskType::from_str(&row.get::<_, String>(6)?),
-        status: TaskStatus::from_str(&row.get::<_, String>(7)?),
-        publish: row.get::<_, i64>(8)? != 0,
-        public_summary: row.get(9)?,
-        raw_output: row.get(10)?,
-        notion_page_id: row.get(11)?,
-        error_text: row.get(12)?,
-        started_at: row.get(13)?,
-        completed_at: row.get(14)?,
-        created_at: row.get(15)?,
-        updated_at: row.get(16)?,
+        input_source_path: row.get(6)?,
+        input_payload: row.get(7)?,
+        task_type: TaskType::from_str(&row.get::<_, String>(8)?),
+        status: TaskStatus::from_str(&row.get::<_, String>(9)?),
+        publish: row.get::<_, i64>(10)? != 0,
+        public_summary: row.get(11)?,
+        raw_output: row.get(12)?,
+        notion_page_id: row.get(13)?,
+        notion_page_url: row.get(14)?,
+        error_text: row.get(15)?,
+        started_at: row.get(16)?,
+        completed_at: row.get(17)?,
+        created_at: row.get(18)?,
+        updated_at: row.get(19)?,
     })
+}
+
+fn ensure_column(connection: &Connection, table: &str, column: &str, column_def: &str) -> Result<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({})", table))?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for row in rows {
+        if row? == column {
+            return Ok(());
+        }
+    }
+
+    connection.execute(
+        &format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_def),
+        [],
+    )?;
+    Ok(())
 }
 
 fn bool_to_sql(value: bool) -> i64 {

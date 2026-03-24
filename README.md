@@ -115,6 +115,41 @@ https://example.com/article
 - v1 は research タスク専用です
 - `/status` と `/help` は task を作りません
 
+## Local CLI
+
+Python やシェルからローカルデータを分析したい場合は `agent-cli` を使います。
+
+```bash
+agent-cli submit --prompt "Telegram メッセージを要約してください" --path /data/telegram/latest.json
+agent-cli status --task-id <task_id>
+agent-cli result --task-id <task_id>
+```
+
+`--path` は単一ファイルまたはディレクトリに対応し、`.txt`, `.md`, `.json`, `.csv` を読み込みます。ディレクトリ指定時は直下ファイルをまとめて分析します。
+
+Python からの実行例:
+
+```python
+import json
+import subprocess
+
+completed = subprocess.run(
+    [
+        "agent-cli",
+        "submit",
+        "--prompt",
+        "BTC価格データを分析して変動要因を要約してください",
+        "--path",
+        "/data/market/btc",
+    ],
+    check=True,
+    capture_output=True,
+    text=True,
+)
+task_id = json.loads(completed.stdout)["task_id"]
+print(task_id)
+```
+
 ## Binaries
 
 - `bot`: Discord の Slash Command を受け取り、内部キューへ積み、Codexを実行し、結果をSQLiteとNotionへ保存します。

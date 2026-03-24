@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use tracing::{error, info};
 
 use crate::config::AppConfig;
+use crate::local_input::build_input_summary;
 use crate::models::{PublicTaskSummary, TaskRecord};
 
 const NOTION_VERSION: &str = "2022-06-28";
@@ -15,6 +16,12 @@ pub struct NotionClient {
     token: Option<String>,
     database_id: Option<String>,
     public_base_url: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct PublishedPage {
+    pub id: String,
+    pub url: String,
 }
 
 impl NotionClient {
@@ -48,7 +55,7 @@ impl NotionClient {
         self.token.is_some() && self.database_id.is_some()
     }
 
-    pub async fn publish_task(&self, task: &TaskRecord) -> Result<Option<String>> {
+    pub async fn publish_task(&self, task: &TaskRecord) -> Result<Option<PublishedPage>> {
         if !self.is_enabled() {
             return Ok(None);
         }
@@ -77,6 +84,7 @@ impl NotionClient {
             "children": [
                 paragraph_block("Task Summary", &summary),
                 paragraph_block("Original Prompt", &truncate(&task.prompt, 1800)),
+                paragraph_block("Input Data Summary", &build_task_input_summary(task)),
                 code_block("Codex Output", &details)
             ]
         });
@@ -108,9 +116,16 @@ impl NotionClient {
             .get("id")
             .and_then(|value| value.as_str())
             .ok_or_else(|| anyhow!("notion response did not include page id"))?;
+        let page_url = body
+            .get("url")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("notion response did not include page url"))?;
 
-        info!(task_id = %task.id, notion_page_id = %page_id, "published task to notion");
-        Ok(Some(page_id.to_string()))
+        info!(task_id = %task.id, notion_page_id = %page_id, notion_page_url = %page_url, "published task to notion");
+        Ok(Some(PublishedPage {
+            id: page_id.to_string(),
+            url: page_url.to_string(),
+        }))
     }
 
     pub async fn query_published_tasks(&self, limit: usize) -> Result<Vec<PublicTaskSummary>> {
@@ -260,6 +275,14 @@ fn build_public_summary(task: &TaskRecord) -> String {
         return "No summary available.".to_string();
     }
     truncate(output.trim(), 800)
+}
+
+fn build_task_input_summary(task: &TaskRecord) -> String {
+    match (&task.input_source_path, &task.input_payload) {
+        (Some(source_path), Some(payload)) => build_input_summary(source_path, payload),
+        (Some(source_path), None) => format!("Source Path: {}", source_path),
+        _ => "No local input data.".to_string(),
+    }
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {

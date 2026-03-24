@@ -489,25 +489,26 @@ async fn handle_task_completion(
             task.publish = true;
 
             info!(task_id = %task.id, "saving completed task to notion");
-            let notion_page_id = state.notion.publish_task(&task).await?;
+            let published_page = state.notion.publish_task(&task).await?;
             state.database.complete_task(
                 &task.id,
                 task.public_summary.as_deref().unwrap_or(""),
                 task.raw_output.as_deref().unwrap_or(""),
-                notion_page_id.as_deref(),
+                published_page.as_ref().map(|page| page.id.as_str()),
+                published_page.as_ref().map(|page| page.url.as_str()),
                 true,
             )?;
             info!(
                 task_id = %task.id,
-                notion_page_id = ?notion_page_id,
+                notion_page_id = ?published_page.as_ref().map(|page| page.id.as_str()),
+                notion_page_url = ?published_page.as_ref().map(|page| page.url.as_str()),
                 "task completed successfully"
             );
 
-            let completion_message = format!(
-                "Task `{}` completed.\nPublic summary:\n{}",
-                task.id,
-                task.public_summary.as_deref().unwrap_or("No summary.")
-            );
+            let completion_message = match published_page.as_ref() {
+                Some(page) => format!("Task `{}` completed.\nNotion Page: {}", task.id, page.url),
+                None => format!("Task `{}` completed.", task.id),
+            };
             state
                 .progress
                 .send(task.channel_id, &completion_message)

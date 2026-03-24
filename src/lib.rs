@@ -2,5 +2,8 @@ pub mod codex;
 pub mod config;
 pub mod db;
 pub mod discord_bot;
+pub mod local_input;
+pub mod logging;
 pub mod models;
 pub mod notion;
+pub mod task_processor;

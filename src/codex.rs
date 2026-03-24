@@ -55,7 +55,7 @@ impl CodexRunner {
 }
 
 fn build_prompt(task: &TaskRecord) -> String {
-    format!(
+    let mut prompt = format!(
         "You are handling a Discord task.\n\
          Task type: {}\n\
          Return a concise Japanese report with these sections:\n\
@@ -66,5 +66,14 @@ fn build_prompt(task: &TaskRecord) -> String {
          User request:\n{}",
         task.task_type.as_str(),
         task.prompt
-    )
+    );
+
+    if let Some(source_path) = &task.input_source_path {
+        prompt.push_str(&format!("\n\nLocal input path:\n{}", source_path));
+    }
+    if let Some(input_payload) = &task.input_payload {
+        prompt.push_str(&format!("\n\nLocal input data:\n{}", input_payload));
+    }
+
+    prompt
 }
