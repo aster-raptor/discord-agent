@@ -26,6 +26,7 @@ impl CodexRunner {
     pub async fn run_research(&self, task: &TaskRecord) -> Result<CodexOutput> {
         let mut command = Command::new(&self.config.codex_bin);
         command.arg("exec");
+        command.arg("--skip-git-repo-check");
         if let Some(model) = &self.config.codex_model {
             command.arg("--model").arg(model);
         }
