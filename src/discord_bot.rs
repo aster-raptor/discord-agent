@@ -21,6 +21,7 @@ use crate::config::AppConfig;
 use crate::db::Database;
 use crate::models::{TaskJob, TaskRecord, TaskStatus, TaskType};
 use crate::notion::NotionClient;
+use crate::task_processor::build_public_summary;
 
 pub async fn run(config: AppConfig) -> Result<()> {
     config.validate_for_bot()?;
@@ -541,15 +542,6 @@ fn render_raw_output(output: &CodexOutput) -> String {
             output.stderr.trim()
         )
     }
-}
-
-fn build_public_summary(output: &str) -> String {
-    let mut summary = output.trim().to_string();
-    if summary.chars().count() > 1200 {
-        summary = summary.chars().take(1200).collect();
-        summary.push_str("\n...");
-    }
-    summary
 }
 
 fn truncate_for_discord(value: &str) -> String {

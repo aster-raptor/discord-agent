@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { renderRss, renderTaskPage } from "@/lib/public-tasks";
 
@@ -8,7 +8,7 @@ describe("public task rendering", () => {
       {
         taskId: "task-123",
         title: "Example",
-        summary: "Summary",
+        summary: "One-line summary.",
         completedAt: "2026-03-22T12:00:00Z",
         updatedAt: "2026-03-22T12:00:00Z",
       },
@@ -16,6 +16,7 @@ describe("public task rendering", () => {
 
     expect(rss).toContain("<link>https://example.com/tasks/task-123</link>");
     expect(rss).toContain("<title>Example</title>");
+    expect(rss).toContain("<description>One-line summary.</description>");
   });
 
   it("escapes html in task pages", () => {
@@ -29,5 +30,17 @@ describe("public task rendering", () => {
 
     expect(page).toContain("&lt;Example&gt;");
     expect(page).toContain("A&amp;B");
+  });
+
+  it("renders public page body with the stored one-line summary", () => {
+    const page = renderTaskPage({
+      taskId: "task-456",
+      title: "Example",
+      summary: "First sentence only.",
+      completedAt: "2026-03-22T12:00:00Z",
+      updatedAt: "2026-03-22T12:00:00Z",
+    });
+
+    expect(page).toContain("First sentence only.");
   });
 });

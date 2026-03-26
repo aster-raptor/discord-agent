@@ -33,12 +33,37 @@ pub fn render_raw_output(output: &CodexOutput) -> String {
 }
 
 pub fn build_public_summary(output: &str) -> String {
-    let mut summary = output.trim().to_string();
-    if summary.chars().count() > 1200 {
-        summary = summary.chars().take(1200).collect();
-        summary.push_str("\n...");
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return "No summary available.".to_string();
     }
-    summary
+
+    let first_sentence = first_sentence(trimmed);
+    truncate_with_ellipsis(first_sentence, 80)
+}
+
+fn first_sentence(value: &str) -> &str {
+    let mut sentence_end = value.len();
+
+    for (index, ch) in value.char_indices() {
+        if matches!(ch, '。' | '.' | '!' | '?' | '\n' | '\r') {
+            sentence_end = index + ch.len_utf8();
+            break;
+        }
+    }
+
+    value[..sentence_end].trim()
+}
+
+fn truncate_with_ellipsis(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
+    }
+
+    let mut truncated = value.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 async fn handle_task_completion(
@@ -100,4 +125,34 @@ async fn handle_task_completion(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_public_summary;
+
+    #[test]
+    fn keeps_only_first_sentence() {
+        let summary = build_public_summary("First sentence. Second sentence.");
+        assert_eq!(summary, "First sentence.");
+    }
+
+    #[test]
+    fn keeps_only_first_line() {
+        let summary = build_public_summary("First line\nSecond line");
+        assert_eq!(summary, "First line");
+    }
+
+    #[test]
+    fn truncates_long_single_sentence() {
+        let summary = build_public_summary(&"a".repeat(200));
+        assert_eq!(summary.chars().count(), 83);
+        assert!(summary.ends_with("..."));
+    }
+
+    #[test]
+    fn falls_back_for_empty_output() {
+        let summary = build_public_summary("   ");
+        assert_eq!(summary, "No summary available.");
+    }
 }

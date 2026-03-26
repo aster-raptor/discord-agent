@@ -7,6 +7,7 @@ use tracing::{error, info};
 use crate::config::AppConfig;
 use crate::local_input::build_input_summary;
 use crate::models::{PublicTaskSummary, TaskRecord};
+use crate::task_processor::build_public_summary;
 
 const NOTION_VERSION: &str = "2022-06-28";
 
@@ -62,8 +63,8 @@ impl NotionClient {
 
         let database_id = self.database_id.as_ref().unwrap();
         info!(task_id = %task.id, notion_database_id = %database_id, "publishing task to notion");
-        let summary = truncate(&build_public_summary(task), 1800);
-        let details = truncate(&task.raw_output.clone().unwrap_or_default(), 1800);
+        let summary = truncate(&build_public_summary_text(task), 1800);
+        let report = parse_report_sections(task);
         let payload = json!({
             "parent": { "database_id": database_id },
             "properties": {
@@ -81,12 +82,7 @@ impl NotionClient {
                 "Thread ID": rich_text_property(&task.thread_id.to_string()),
                 "Public URL": rich_text_property(&format!("{}/tasks/{}", self.public_base_url, task.id))
             },
-            "children": [
-                paragraph_block("Task Summary", &summary),
-                paragraph_block("Original Prompt", &truncate(&task.prompt, 1800)),
-                paragraph_block("Input Data Summary", &build_task_input_summary(task)),
-                code_block("Codex Output", &details)
-            ]
+            "children": build_page_children(task, &report)
         });
 
         let response = self
@@ -173,8 +169,7 @@ impl NotionClient {
             ));
         }
 
-        let body: Value =
-            serde_json::from_str(&body_text).context("invalid notion query response")?;
+        let body: Value = serde_json::from_str(&body_text).context("invalid notion query response")?;
         let results = body
             .get("results")
             .and_then(|value| value.as_array())
@@ -236,53 +231,197 @@ fn select_property(value: &str) -> Value {
     })
 }
 
-fn paragraph_block(heading: &str, body: &str) -> Value {
+fn heading_block(text: &str) -> Value {
     json!({
         "object": "block",
-        "type": "paragraph",
-        "paragraph": {
-            "rich_text": [
-                {
-                    "type": "text",
-                    "text": { "content": truncate(heading, 200) }
-                },
-                {
-                    "type": "text",
-                    "text": { "content": format!("\n{}", truncate(body, 1800)) }
-                }
-            ]
-        }
-    })
-}
-
-fn code_block(language: &str, body: &str) -> Value {
-    json!({
-        "object": "block",
-        "type": "code",
-        "code": {
-            "language": "plain text",
+        "type": "heading_2",
+        "heading_2": {
             "rich_text": [{
                 "type": "text",
-                "text": { "content": format!("{}\n\n{}", language, truncate(body, 1800)) }
+                "text": { "content": truncate(text, 200) }
             }]
         }
     })
 }
 
-fn build_public_summary(task: &TaskRecord) -> String {
-    let output = task.raw_output.clone().unwrap_or_default();
-    if output.trim().is_empty() {
-        return "No summary available.".to_string();
-    }
-    truncate(output.trim(), 800)
+fn paragraph_block(body: &str) -> Value {
+    json!({
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {
+            "rich_text": [{
+                "type": "text",
+                "text": { "content": truncate(body, 1800) }
+            }]
+        }
+    })
 }
 
-fn build_task_input_summary(task: &TaskRecord) -> String {
-    match (&task.input_source_path, &task.input_payload) {
-        (Some(source_path), Some(payload)) => build_input_summary(source_path, payload),
-        (Some(source_path), None) => format!("Source Path: {}", source_path),
-        _ => "No local input data.".to_string(),
+fn bulleted_list_item_block(body: &str) -> Value {
+    json!({
+        "object": "block",
+        "type": "bulleted_list_item",
+        "bulleted_list_item": {
+            "rich_text": [{
+                "type": "text",
+                "text": { "content": truncate(body, 1800) }
+            }]
+        }
+    })
+}
+
+fn build_public_summary_text(task: &TaskRecord) -> String {
+    if let Some(summary) = &task.public_summary {
+        if !summary.trim().is_empty() {
+            return summary.trim().to_string();
+        }
     }
+
+    build_public_summary(&task.raw_output.clone().unwrap_or_default())
+}
+
+fn build_task_input_summary(task: &TaskRecord) -> Option<String> {
+    match (&task.input_source_path, &task.input_payload) {
+        (Some(source_path), Some(payload)) => Some(build_input_summary(source_path, payload)),
+        (Some(source_path), None) => Some(format!("Source Path: {}", source_path)),
+        _ => None,
+    }
+}
+
+fn display_prompt(task: &TaskRecord) -> String {
+    task.prompt
+        .split("\n\nReferenced URLs:\n")
+        .next()
+        .unwrap_or(&task.prompt)
+        .trim()
+        .to_string()
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ReportSections {
+    summary: String,
+    key_points: Vec<String>,
+    next_steps: Vec<String>,
+}
+
+fn build_page_children(task: &TaskRecord, report: &ReportSections) -> Vec<Value> {
+    let mut children = Vec::new();
+    let summary_body = if report.summary.is_empty() {
+        build_public_summary_text(task)
+    } else {
+        report.summary.clone()
+    };
+
+    children.push(heading_block("\u{8981}\u{7d04}"));
+    children.push(paragraph_block(&summary_body));
+
+    if !report.key_points.is_empty() {
+        children.push(heading_block("\u{4e3b}\u{8981}\u{30dd}\u{30a4}\u{30f3}\u{30c8}"));
+        for point in &report.key_points {
+            children.push(bulleted_list_item_block(point));
+        }
+    }
+
+    if !report.next_steps.is_empty() {
+        children.push(heading_block("\u{6b21}\u{306b}\u{898b}\u{308b}\u{3079}\u{304d}\u{70b9}"));
+        for point in &report.next_steps {
+            children.push(bulleted_list_item_block(point));
+        }
+    }
+
+    children.push(heading_block("\u{4f9d}\u{983c}\u{5185}\u{5bb9}"));
+    children.push(paragraph_block(&truncate(&display_prompt(task), 1800)));
+
+    if let Some(input_summary) = build_task_input_summary(task) {
+        children.push(heading_block("\u{5165}\u{529b}\u{30c7}\u{30fc}\u{30bf}\u{6982}\u{8981}"));
+        children.push(paragraph_block(&input_summary));
+    }
+
+    children
+}
+
+fn parse_report_sections(task: &TaskRecord) -> ReportSections {
+    let stdout = extract_stdout(task.raw_output.as_deref().unwrap_or_default());
+    if stdout.trim().is_empty() {
+        return ReportSections {
+            summary: build_public_summary_text(task),
+            ..ReportSections::default()
+        };
+    }
+
+    let mut report = ReportSections::default();
+    let mut current_section: Option<&str> = None;
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if is_summary_heading(trimmed) {
+            current_section = Some("summary");
+            continue;
+        }
+        if is_key_points_heading(trimmed) {
+            current_section = Some("key_points");
+            continue;
+        }
+        if is_next_steps_heading(trimmed) {
+            current_section = Some("next_steps");
+            continue;
+        }
+
+        match current_section {
+            Some("summary") => {
+                if !report.summary.is_empty() {
+                    report.summary.push('\n');
+                }
+                report.summary.push_str(trimmed);
+            }
+            Some("key_points") => report.key_points.push(clean_list_item(trimmed)),
+            Some("next_steps") => report.next_steps.push(clean_list_item(trimmed)),
+            _ => {}
+        }
+    }
+
+    if report.summary.is_empty() {
+        report.summary = build_public_summary_text(task);
+    }
+    report.key_points.retain(|item| !item.is_empty());
+    report.next_steps.retain(|item| !item.is_empty());
+    report
+}
+
+fn extract_stdout(raw_output: &str) -> &str {
+    if let Some(rest) = raw_output.strip_prefix("STDOUT\n") {
+        if let Some((stdout, _)) = rest.split_once("\n\nSTDERR\n") {
+            return stdout.trim();
+        }
+        return rest.trim();
+    }
+    raw_output.trim()
+}
+
+fn is_summary_heading(value: &str) -> bool {
+    value.trim_start().starts_with('#') && value.contains("\u{8981}\u{7d04}")
+}
+
+fn is_key_points_heading(value: &str) -> bool {
+    value.trim_start().starts_with('#')
+        && value.contains("\u{4e3b}\u{8981}\u{30dd}\u{30a4}\u{30f3}\u{30c8}")
+}
+
+fn is_next_steps_heading(value: &str) -> bool {
+    value.trim_start().starts_with('#')
+        && value.contains("\u{6b21}\u{306b}\u{898b}\u{308b}\u{3079}\u{304d}\u{70b9}")
+}
+
+fn clean_list_item(value: &str) -> String {
+    value
+        .trim_start_matches('-')
+        .trim_start_matches('\u{30fb}')
+        .trim()
+        .to_string()
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
@@ -350,4 +489,86 @@ fn extract_date(properties: &Value, key: &str) -> Option<String> {
         .and_then(|value| value.get("start"))
         .and_then(|value| value.as_str())
         .map(|value| value.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_page_children, build_public_summary_text, display_prompt, parse_report_sections};
+    use crate::models::{TaskRecord, TaskType};
+
+    #[test]
+    fn parses_structured_report_sections() {
+        let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
+        task.raw_output = Some(
+            "STDOUT\n## 1. \u{8981}\u{7d04}\n\u{77ed}\u{3044}\u{8981}\u{7d04}\u{3067}\u{3059}\u{3002}\n\n## 2. \u{4e3b}\u{8981}\u{30dd}\u{30a4}\u{30f3}\u{30c8}\n- \u{4e00}\u{3064}\u{76ee}\n- \u{4e8c}\u{3064}\u{76ee}\n\n## 3. \u{6b21}\u{306b}\u{898b}\u{308b}\u{3079}\u{304d}\u{70b9}\n- \u{6b21}A\n- \u{6b21}B\n\nSTDERR\nignored".into(),
+        );
+        task.public_summary = Some("\u{516c}\u{958b}\u{7528}\u{306e}\u{4e00}\u{6587}\u{3002}".into());
+
+        let report = parse_report_sections(&task);
+        assert_eq!(report.summary, "\u{77ed}\u{3044}\u{8981}\u{7d04}\u{3067}\u{3059}\u{3002}");
+        assert_eq!(report.key_points, vec!["\u{4e00}\u{3064}\u{76ee}", "\u{4e8c}\u{3064}\u{76ee}"]);
+        assert_eq!(report.next_steps, vec!["\u{6b21}A", "\u{6b21}B"]);
+    }
+
+    #[test]
+    fn falls_back_to_public_summary_when_sections_missing() {
+        let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
+        task.public_summary = Some("公開用の一文。".into());
+        task.raw_output = Some("STDOUT\n自由形式の本文".into());
+
+        let report = parse_report_sections(&task);
+        assert_eq!(report.summary, "公開用の一文。");
+        assert!(report.key_points.is_empty());
+        assert!(report.next_steps.is_empty());
+    }
+
+    #[test]
+    fn omits_input_data_section_for_discord_tasks() {
+        let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
+        task.public_summary = Some("公開用の一文。".into());
+
+        let report = parse_report_sections(&task);
+        let children = build_page_children(&task, &report);
+        let serialized = serde_json::to_string(&children).unwrap();
+
+        assert!(!serialized.contains("入力データ概要"));
+        assert!(!serialized.contains("No local input data."));
+        assert!(!serialized.contains("STDERR"));
+    }
+
+    #[test]
+    fn includes_input_data_section_for_cli_tasks() {
+        let mut task = TaskRecord::new(0, 0, 0, "title".into(), "prompt".into(), TaskType::Research);
+        task.public_summary = Some("公開用の一文。".into());
+        task.input_source_path = Some("/tmp/input.json".into());
+        task.input_payload = Some("{\"hello\":\"world\"}".into());
+
+        let report = parse_report_sections(&task);
+        let children = build_page_children(&task, &report);
+        let serialized = serde_json::to_string(&children).unwrap();
+
+        assert!(serialized.contains("入力データ概要"));
+    }
+
+    #[test]
+    fn keeps_public_summary_short() {
+        let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
+        task.public_summary = Some("短い一文です。".into());
+
+        assert_eq!(build_public_summary_text(&task), "短い一文です。");
+    }
+
+    #[test]
+    fn strips_internal_url_section_from_display_prompt() {
+        let task = TaskRecord::new(
+            1,
+            1,
+            1,
+            "title".into(),
+            "原油について教えて\n\nReferenced URLs:\nhttps://example.com".into(),
+            TaskType::Research,
+        );
+
+        assert_eq!(display_prompt(&task), "原油について教えて");
+    }
 }
