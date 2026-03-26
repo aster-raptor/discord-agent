@@ -38,15 +38,46 @@ pub fn build_public_summary(output: &str) -> String {
         return "No summary available.".to_string();
     }
 
-    let first_sentence = first_sentence(trimmed);
+    let summary_source = first_summary_line(trimmed).unwrap_or(trimmed);
+    let first_sentence = first_sentence(summary_source);
     truncate_with_ellipsis(first_sentence, 80)
+}
+
+fn first_summary_line(value: &str) -> Option<&str> {
+    value
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !looks_like_structural_line(line))
+}
+
+fn looks_like_structural_line(value: &str) -> bool {
+    let normalized = normalize_heading_candidate(value);
+    normalized.is_empty()
+        || normalized == "stdout"
+        || normalized == "stderr"
+        || normalized.contains("\u{8981}\u{7d04}")
+        || normalized.contains("\u{4e3b}\u{8981}\u{30dd}\u{30a4}\u{30f3}\u{30c8}")
+        || normalized.contains("\u{6b21}\u{306b}\u{898b}\u{308b}\u{3079}\u{304d}\u{70b9}")
+}
+
+fn normalize_heading_candidate(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('*')
+        .trim_start_matches('#')
+        .trim()
+        .trim_start_matches(|c: char| c.is_ascii_digit() || matches!(c, '.' | ')' | ':' | '-' | ' '))
+        .trim()
+        .trim_matches('*')
+        .trim()
+        .to_lowercase()
 }
 
 fn first_sentence(value: &str) -> &str {
     let mut sentence_end = value.len();
 
     for (index, ch) in value.char_indices() {
-        if matches!(ch, '。' | '.' | '!' | '?' | '\n' | '\r') {
+        if matches!(ch, '\u{3002}' | '.' | '!' | '?' | '\n' | '\r') {
             sentence_end = index + ch.len_utf8();
             break;
         }
@@ -141,6 +172,12 @@ mod tests {
     fn keeps_only_first_line() {
         let summary = build_public_summary("First line\nSecond line");
         assert_eq!(summary, "First line");
+    }
+
+    #[test]
+    fn skips_markdown_heading_when_building_summary() {
+        let summary = build_public_summary("**1. 要約**\n住友電工は非鉄・電線分野の大手企業です。");
+        assert_eq!(summary, "住友電工は非鉄・電線分野の大手企業です。");
     }
 
     #[test]

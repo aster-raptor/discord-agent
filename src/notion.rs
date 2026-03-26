@@ -312,28 +312,28 @@ fn build_page_children(task: &TaskRecord, report: &ReportSections) -> Vec<Value>
         report.summary.clone()
     };
 
-    children.push(heading_block("\u{8981}\u{7d04}"));
+    children.push(heading_block("要約"));
     children.push(paragraph_block(&summary_body));
 
     if !report.key_points.is_empty() {
-        children.push(heading_block("\u{4e3b}\u{8981}\u{30dd}\u{30a4}\u{30f3}\u{30c8}"));
+        children.push(heading_block("主要ポイント"));
         for point in &report.key_points {
             children.push(bulleted_list_item_block(point));
         }
     }
 
     if !report.next_steps.is_empty() {
-        children.push(heading_block("\u{6b21}\u{306b}\u{898b}\u{308b}\u{3079}\u{304d}\u{70b9}"));
+        children.push(heading_block("次に見るべき点"));
         for point in &report.next_steps {
             children.push(bulleted_list_item_block(point));
         }
     }
 
-    children.push(heading_block("\u{4f9d}\u{983c}\u{5185}\u{5bb9}"));
+    children.push(heading_block("依頼内容"));
     children.push(paragraph_block(&truncate(&display_prompt(task), 1800)));
 
     if let Some(input_summary) = build_task_input_summary(task) {
-        children.push(heading_block("\u{5165}\u{529b}\u{30c7}\u{30fc}\u{30bf}\u{6982}\u{8981}"));
+        children.push(heading_block("入力データ概要"));
         children.push(paragraph_block(&input_summary));
     }
 
@@ -403,23 +403,45 @@ fn extract_stdout(raw_output: &str) -> &str {
 }
 
 fn is_summary_heading(value: &str) -> bool {
-    value.trim_start().starts_with('#') && value.contains("\u{8981}\u{7d04}")
+    looks_like_section_heading(value)
+        && normalized_section_heading(value).contains("要約")
 }
 
 fn is_key_points_heading(value: &str) -> bool {
-    value.trim_start().starts_with('#')
-        && value.contains("\u{4e3b}\u{8981}\u{30dd}\u{30a4}\u{30f3}\u{30c8}")
+    looks_like_section_heading(value)
+        && normalized_section_heading(value).contains("主要ポイント")
 }
 
 fn is_next_steps_heading(value: &str) -> bool {
-    value.trim_start().starts_with('#')
-        && value.contains("\u{6b21}\u{306b}\u{898b}\u{308b}\u{3079}\u{304d}\u{70b9}")
+    looks_like_section_heading(value)
+        && normalized_section_heading(value).contains("次に見るべき点")
+}
+
+fn looks_like_section_heading(value: &str) -> bool {
+    let trimmed = value.trim_start();
+    trimmed.starts_with('#')
+        || trimmed.starts_with('*')
+        || trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
+}
+
+fn normalized_section_heading(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('*')
+        .trim_start_matches('#')
+        .trim()
+        .trim_start_matches(|c: char| c.is_ascii_digit() || matches!(c, '.' | ')' | ' ' | '\t'))
+        .trim()
+        .trim_matches('*')
+        .trim()
+        .to_string()
 }
 
 fn clean_list_item(value: &str) -> String {
     value
         .trim_start_matches('-')
         .trim_start_matches('\u{30fb}')
+        .trim_start_matches('*')
         .trim()
         .to_string()
 }
@@ -500,14 +522,27 @@ mod tests {
     fn parses_structured_report_sections() {
         let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
         task.raw_output = Some(
-            "STDOUT\n## 1. \u{8981}\u{7d04}\n\u{77ed}\u{3044}\u{8981}\u{7d04}\u{3067}\u{3059}\u{3002}\n\n## 2. \u{4e3b}\u{8981}\u{30dd}\u{30a4}\u{30f3}\u{30c8}\n- \u{4e00}\u{3064}\u{76ee}\n- \u{4e8c}\u{3064}\u{76ee}\n\n## 3. \u{6b21}\u{306b}\u{898b}\u{308b}\u{3079}\u{304d}\u{70b9}\n- \u{6b21}A\n- \u{6b21}B\n\nSTDERR\nignored".into(),
+            "STDOUT\n## 1. 要約\n短い要約です。\n\n## 2. 主要ポイント\n- 一つ目\n- 二つ目\n\n## 3. 次に見るべき点\n- 次A\n- 次B\n\nSTDERR\nignored".into(),
         );
-        task.public_summary = Some("\u{516c}\u{958b}\u{7528}\u{306e}\u{4e00}\u{6587}\u{3002}".into());
+        task.public_summary = Some("公開用の一文。".into());
 
         let report = parse_report_sections(&task);
-        assert_eq!(report.summary, "\u{77ed}\u{3044}\u{8981}\u{7d04}\u{3067}\u{3059}\u{3002}");
-        assert_eq!(report.key_points, vec!["\u{4e00}\u{3064}\u{76ee}", "\u{4e8c}\u{3064}\u{76ee}"]);
-        assert_eq!(report.next_steps, vec!["\u{6b21}A", "\u{6b21}B"]);
+        assert_eq!(report.summary, "短い要約です。");
+        assert_eq!(report.key_points, vec!["一つ目", "二つ目"]);
+        assert_eq!(report.next_steps, vec!["次A", "次B"]);
+    }
+
+    #[test]
+    fn parses_bold_numbered_headings() {
+        let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
+        task.raw_output = Some(
+            "STDOUT\n**1. 要約**\n最初の要約です。\n\n**2. 主要ポイント**\n* 観点A\n\n**3. 次に見るべき点**\n* 確認A".into(),
+        );
+
+        let report = parse_report_sections(&task);
+        assert_eq!(report.summary, "最初の要約です。");
+        assert_eq!(report.key_points, vec!["観点A"]);
+        assert_eq!(report.next_steps, vec!["確認A"]);
     }
 
     #[test]
