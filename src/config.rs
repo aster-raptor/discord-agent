@@ -8,6 +8,7 @@ pub struct AppConfig {
     pub discord_allowed_channel_ids: Vec<u64>,
     pub sqlite_path: String,
     pub log_file_path: String,
+    pub research_prompt_path: String,
     pub codex_bin: String,
     pub codex_model: Option<String>,
     pub worker_concurrency: usize,
@@ -28,6 +29,8 @@ impl AppConfig {
                 .unwrap_or_else(|_| "data/discord-agent.sqlite3".to_string()),
             log_file_path: env::var("LOG_FILE_PATH")
                 .unwrap_or_else(|_| "logs/discord-agent.log".to_string()),
+            research_prompt_path: env::var("RESEARCH_PROMPT_PATH")
+                .unwrap_or_else(|_| "prompts/research.txt".to_string()),
             codex_bin: env::var("CODEX_BIN").unwrap_or_else(|_| "codex".to_string()),
             codex_model: env::var("CODEX_MODEL")
                 .ok()

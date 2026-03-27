@@ -39,6 +39,8 @@ jobs:
           cp target/release/bot "${PACKAGE_DIR}/bot"
           cp target/release/agent-cli "${PACKAGE_DIR}/agent-cli"
           cp README.md "${PACKAGE_DIR}/README.md"
+          mkdir -p "${PACKAGE_DIR}/prompts"
+          cp prompts/research.txt "${PACKAGE_DIR}/prompts/research.txt"
 
           tar -C "${RUNNER_TEMP}" -czf "${ARCHIVE_BASENAME}.tar.gz" "${ARCHIVE_BASENAME}"
 

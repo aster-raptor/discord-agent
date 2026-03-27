@@ -13,6 +13,7 @@ tar -xzf "discord-agent-bot-linux-x86_64-${VERSION}.tar.gz"
 mv discord-agent-bot-linux-x86_64-${VERSION}/bot discord-agent-bot/
 mv discord-agent-bot-linux-x86_64-${VERSION}/agent-cli discord-agent-bot/
 mv discord-agent-bot-linux-x86_64-${VERSION}/README.md discord-agent-bot/
+mv discord-agent-bot-linux-x86_64-${VERSION}/prompts discord-agent-bot/
 
 rm "discord-agent-bot-linux-x86_64-${VERSION}.tar.gz"
 rm -rf "discord-agent-bot-linux-x86_64-${VERSION}"
@@ -36,6 +37,7 @@ export NOTION_TOKEN=your_notion_token
 export NOTION_TASK_DATABASE_ID=your_notion_database_id
 export PUBLIC_BASE_URL=https://your-public-app.example.com
 export LOG_FILE_PATH=logs/discord-agent.log
+export RESEARCH_PROMPT_PATH=prompts/research.txt
 export RUST_LOG=info
 ./bot
 ```
@@ -59,6 +61,7 @@ Environment=NOTION_TOKEN=your_notion_token
 Environment=NOTION_TASK_DATABASE_ID=your_notion_database_id
 Environment=PUBLIC_BASE_URL=https://your-public-app.example.com
 Environment=LOG_FILE_PATH=/opt/discord-agent-bot/logs/discord-agent.log
+Environment=RESEARCH_PROMPT_PATH=/opt/discord-agent-bot/prompts/research.txt
 Environment=RUST_LOG=info
 ExecStart=/opt/discord-agent-bot/bot
 Restart=always
@@ -154,6 +157,8 @@ task_id = json.loads(completed.stdout)["task_id"]
 print(task_id)
 ```
 
+`prompts/research.txt` を編集すると、Research の指示内容をバイナリ再ビルドなしで変更できます。systemd 運用では prompt ファイルを更新して `sudo systemctl restart discord-agent-bot` を実行してください。
+
 ## Binaries
 
 - `bot`: Discord の Slash Command を受け取り、内部キューへ積み、Codexを実行し、結果をSQLiteとNotionへ保存します。
@@ -168,6 +173,7 @@ print(task_id)
 - `CODEX_MODEL`: 任意。Codex CLIへ `--model` で渡す
 - `WORKER_CONCURRENCY`: ワーカー数。既定値は `1`
 - `LOG_FILE_PATH`: ログファイルパス。既定値は `logs/discord-agent.log`
+- `RESEARCH_PROMPT_PATH`: Research prompt テンプレートのパス。既定値は `prompts/research.txt`
 - `RUST_LOG`: ログレベル。既定値は `info`
 - `NOTION_TOKEN`: 任意。設定時のみNotion書き込み/読み出しを有効化
 - `NOTION_TASK_DATABASE_ID`: 任意。Notion Task DBのID
@@ -237,4 +243,3 @@ docker compose exec app npm run dev
 - [Architecture](docs/architecture.md)
 - [Notion and Discord Setup](docs/notion-discord-setup.md)
 - [Vercel Setup](docs/vercel-setup.md)
-
