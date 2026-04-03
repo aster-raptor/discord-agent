@@ -31,16 +31,12 @@ rm -rf "discord-agent-bot-linux-x86_64-${VERSION}"
 3. 環境変数を設定して Bot を起動します。
 
 ```bash
-export DISCORD_TOKEN=your_discord_token
-export DISCORD_ALLOWED_CHANNEL_IDS=123456789012345678
-export NOTION_TOKEN=your_notion_token
-export NOTION_TASK_DATABASE_ID=your_notion_database_id
-export PUBLIC_BASE_URL=https://your-public-app.example.com
-export LOG_FILE_PATH=logs/discord-agent.log
-export RESEARCH_PROMPT_PATH=prompts/research.txt
-export RUST_LOG=info
+cp .env.example .env
+# edit .env
 ./bot
 ```
+
+`bot` と `agent-cli` は起動時に `.env` を読み込みます。systemd 運用でも同じ `.env` を `EnvironmentFile` として使えます。
 
 Linux 上でデーモンとして動かす場合は systemd service を作成します。
 
@@ -55,14 +51,7 @@ After=network.target
 Type=simple
 User=your_user
 WorkingDirectory=/opt/discord-agent-bot
-Environment=DISCORD_TOKEN=your_discord_token
-Environment=DISCORD_ALLOWED_CHANNEL_IDS=123456789012345678
-Environment=NOTION_TOKEN=your_notion_token
-Environment=NOTION_TASK_DATABASE_ID=your_notion_database_id
-Environment=PUBLIC_BASE_URL=https://your-public-app.example.com
-Environment=LOG_FILE_PATH=/opt/discord-agent-bot/logs/discord-agent.log
-Environment=RESEARCH_PROMPT_PATH=/opt/discord-agent-bot/prompts/research.txt
-Environment=RUST_LOG=info
+EnvironmentFile=/opt/discord-agent-bot/.env
 ExecStart=/opt/discord-agent-bot/bot
 Restart=always
 RestartSec=5
@@ -74,6 +63,8 @@ WantedBy=multi-user.target
 有効化と起動:
 
 ```bash
+cp /opt/discord-agent-bot/.env.example /opt/discord-agent-bot/.env
+# edit /opt/discord-agent-bot/.env
 sudo systemctl daemon-reload
 sudo systemctl enable --now discord-agent-bot
 sudo systemctl status discord-agent-bot
@@ -181,6 +172,8 @@ print(task_id)
 - `NOTION_TOKEN`: 任意。設定時のみNotion書き込み/読み出しを有効化
 - `NOTION_TASK_DATABASE_ID`: 任意。Notion Task DBのID
 - `PUBLIC_BASE_URL`: 公開RSSアプリの公開ベースURL。既定値は `http://localhost:3000`
+
+`.env` で一元管理できます。`bot` と `agent-cli` はカレントディレクトリの `.env` を優先して読み込み、見つからない場合は実行ファイルと同じディレクトリの `.env` を参照します。
 
 ### Discord bot
 

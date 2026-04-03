@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
 use serde_json::{json, Value};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::config::AppConfig;
 use crate::local_input::build_input_summary;
@@ -56,8 +56,24 @@ impl NotionClient {
         self.token.is_some() && self.database_id.is_some()
     }
 
+    pub fn missing_configuration(&self) -> Vec<&'static str> {
+        let mut missing = Vec::new();
+        if self.token.is_none() {
+            missing.push("NOTION_TOKEN");
+        }
+        if self.database_id.is_none() {
+            missing.push("NOTION_TASK_DATABASE_ID");
+        }
+        missing
+    }
+
     pub async fn publish_task(&self, task: &TaskRecord) -> Result<Option<PublishedPage>> {
         if !self.is_enabled() {
+            warn!(
+                task_id = %task.id,
+                missing = ?self.missing_configuration(),
+                "skipping notion publish because notion integration is not configured"
+            );
             return Ok(None);
         }
 

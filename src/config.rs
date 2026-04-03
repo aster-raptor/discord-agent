@@ -1,6 +1,7 @@
 use std::env;
+use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -19,6 +20,8 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
+        load_dotenv().context("failed to load .env")?;
+
         Ok(Self {
             discord_token: env::var("DISCORD_TOKEN").unwrap_or_default(),
             discord_allowed_channel_ids: env::var("DISCORD_ALLOWED_CHANNEL_IDS")
@@ -68,4 +71,39 @@ fn parse_u64_list(value: &str) -> Vec<u64> {
         .split(',')
         .filter_map(|item| item.trim().parse::<u64>().ok())
         .collect()
+}
+
+fn load_dotenv() -> Result<()> {
+    let candidate_paths = dotenv_candidate_paths()?;
+
+    for path in candidate_paths {
+        if !path.is_file() {
+            continue;
+        }
+
+        dotenvy::from_path(&path)
+            .with_context(|| format!("failed to load dotenv file: {}", path.display()))?;
+        break;
+    }
+
+    Ok(())
+}
+
+fn dotenv_candidate_paths() -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    paths.push(PathBuf::from(".env"));
+
+    let current_exe = env::current_exe().context("failed to resolve current executable")?;
+    if let Some(parent) = current_exe.parent() {
+        let exe_dotenv = parent.join(".env");
+        if !contains_path(&paths, &exe_dotenv) {
+            paths.push(exe_dotenv);
+        }
+    }
+
+    Ok(paths)
+}
+
+fn contains_path(paths: &[PathBuf], candidate: &Path) -> bool {
+    paths.iter().any(|path| path == candidate)
 }
