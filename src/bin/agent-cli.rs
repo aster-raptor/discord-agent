@@ -27,7 +27,8 @@ async fn main() -> Result<()> {
         "submit" => {
             let prompt = read_flag(&mut args, "--prompt")?;
             let path = read_flag(&mut args, "--path")?;
-            submit_task(config, &prompt, &path).await
+            let prompt_template = read_optional_flag(&mut args, "--prompt-template");
+            submit_task(config, &prompt, &path, prompt_template.as_deref()).await
         }
         "status" => {
             let task_id = read_flag(&mut args, "--task-id")?;
@@ -39,13 +40,23 @@ async fn main() -> Result<()> {
         }
         "worker" => {
             let task_id = read_flag(&mut args, "--task-id")?;
+            let prompt_template = read_optional_flag(&mut args, "--prompt-template");
+            let mut config = config;
+            if let Some(path) = prompt_template {
+                config.research_prompt_path = path;
+            }
             run_worker(config, &task_id).await
         }
         other => Err(anyhow!("unknown command: {}", other)),
     }
 }
 
-async fn submit_task(config: AppConfig, prompt: &str, path: &str) -> Result<()> {
+async fn submit_task(
+    config: AppConfig,
+    prompt: &str,
+    path: &str,
+    prompt_template: Option<&str>,
+) -> Result<()> {
     let database = Arc::new(Database::open(&config.sqlite_path)?);
     let loaded_input = load_from_path(path)?;
 
@@ -62,7 +73,7 @@ async fn submit_task(config: AppConfig, prompt: &str, path: &str) -> Result<()> 
 
     database.insert_task(&task)?;
     database.update_status(&task.id, discord_agent::models::TaskStatus::Queued, Some("task queued"))?;
-    spawn_worker_process(&task.id)?;
+    spawn_worker_process(&task.id, prompt_template)?;
 
     println!("{}", json!({ "task_id": task.id }));
     Ok(())
@@ -108,13 +119,17 @@ async fn run_worker(config: AppConfig, task_id: &str) -> Result<()> {
     process_task(&database, &notion, &codex, task_id).await
 }
 
-fn spawn_worker_process(task_id: &str) -> Result<()> {
+fn spawn_worker_process(task_id: &str, prompt_template: Option<&str>) -> Result<()> {
     let current_exe = env::current_exe().context("failed to resolve current executable")?;
     let mut command = Command::new(current_exe);
     command
         .arg("worker")
         .arg("--task-id")
-        .arg(task_id)
+        .arg(task_id);
+    if let Some(path) = prompt_template {
+        command.arg("--prompt-template").arg(path);
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -135,6 +150,15 @@ fn read_flag(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<Stri
     Err(anyhow!("missing required flag {}", flag))
 }
 
+fn read_optional_flag(args: &mut impl Iterator<Item = String>, flag: &str) -> Option<String> {
+    while let Some(arg) = args.next() {
+        if arg == flag {
+            return args.next();
+        }
+    }
+    None
+}
+
 fn build_title(prompt: &str) -> String {
     let mut title = prompt
         .lines()
@@ -150,5 +174,34 @@ fn build_title(prompt: &str) -> String {
         "Local analysis task".to_string()
     } else {
         title
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_optional_flag;
+
+    #[test]
+    fn reads_optional_flag_when_present() {
+        let mut args = vec![
+            "--path".to_string(),
+            "/tmp/input.json".to_string(),
+            "--prompt-template".to_string(),
+            "prompts/custom.txt".to_string(),
+        ]
+        .into_iter();
+
+        let value = read_optional_flag(&mut args, "--prompt-template");
+
+        assert_eq!(value.as_deref(), Some("prompts/custom.txt"));
+    }
+
+    #[test]
+    fn returns_none_when_optional_flag_is_missing() {
+        let mut args = vec!["--path".to_string(), "/tmp/input.json".to_string()].into_iter();
+
+        let value = read_optional_flag(&mut args, "--prompt-template");
+
+        assert_eq!(value, None);
     }
 }

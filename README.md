@@ -128,6 +128,7 @@ Python やシェルからローカルデータを分析したい場合は `agent
 
 ```bash
 agent-cli submit --prompt "Telegram メッセージを要約してください" --path /data/telegram/latest.json
+agent-cli submit --prompt "Telegram メッセージを要約してください" --path /data/telegram/latest.json --prompt-template prompts/custom-research.txt
 agent-cli status --task-id <task_id>
 agent-cli result --task-id <task_id>
 ```
@@ -158,6 +159,8 @@ print(task_id)
 ```
 
 `prompts/research.txt` を編集すると、Research の指示内容をバイナリ再ビルドなしで変更できます。systemd 運用では prompt ファイルを更新して `sudo systemctl restart discord-agent-bot` を実行してください。
+
+`--prompt-template` で使用する prompt template ファイルを指定できます。未指定の場合は `prompts/research.txt` を使います。
 
 ## Binaries
 
