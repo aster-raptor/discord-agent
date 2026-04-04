@@ -13,7 +13,7 @@ tar -xzf "discord-agent-bot-linux-x86_64-${VERSION}.tar.gz"
 mv discord-agent-bot-linux-x86_64-${VERSION}/bot discord-agent-bot/
 mv discord-agent-bot-linux-x86_64-${VERSION}/agent-cli discord-agent-bot/
 mv discord-agent-bot-linux-x86_64-${VERSION}/README.md discord-agent-bot/
-mv discord-agent-bot-linux-x86_64-${VERSION}/prompts discord-agent-bot/
+mv discord-agent-bot-linux-x86_64-${VERSION}/prompts/* discord-agent-bot/prompts/
 
 rm "discord-agent-bot-linux-x86_64-${VERSION}.tar.gz"
 rm -rf "discord-agent-bot-linux-x86_64-${VERSION}"
