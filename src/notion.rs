@@ -365,6 +365,10 @@ fn parse_report_sections(task: &TaskRecord) -> ReportSections {
         };
     }
 
+    if let Some(report) = parse_json_report_sections(stdout) {
+        return finalize_report_sections(task, report);
+    }
+
     let mut report = ReportSections::default();
     let mut current_section: Option<&str> = None;
 
@@ -400,6 +404,10 @@ fn parse_report_sections(task: &TaskRecord) -> ReportSections {
         }
     }
 
+    finalize_report_sections(task, report)
+}
+
+fn finalize_report_sections(task: &TaskRecord, mut report: ReportSections) -> ReportSections {
     if report.summary.is_empty() {
         report.summary = build_public_summary_text(task);
     }
@@ -416,6 +424,216 @@ fn extract_stdout(raw_output: &str) -> &str {
         return rest.trim();
     }
     raw_output.trim()
+}
+
+fn parse_json_report_sections(stdout: &str) -> Option<ReportSections> {
+    let json = extract_first_json_object(stdout)?;
+    let mut report = ReportSections::default();
+
+    report.summary = flatten_json_text(json.get("market_summary")).unwrap_or_default();
+
+    if let Some(services) = json.get("services").and_then(|value| value.as_array()) {
+        report.key_points = services
+            .iter()
+            .filter_map(build_service_key_point)
+            .collect();
+
+        let mut actions = build_action_plan_items(json.get("action_plan"));
+        if actions.is_empty() {
+            actions = services
+                .iter()
+                .filter_map(build_service_action)
+                .collect::<Vec<_>>();
+        }
+        report.next_steps = actions;
+    }
+
+    if report.summary.is_empty() && report.key_points.is_empty() && report.next_steps.is_empty() {
+        None
+    } else {
+        Some(report)
+    }
+}
+
+fn extract_first_json_object(value: &str) -> Option<Value> {
+    let start = value.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (offset, ch) in value[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let end = start + offset + ch.len_utf8();
+                    return serde_json::from_str::<Value>(&value[start..end]).ok();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn flatten_json_text(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Value::Array(items) => {
+            let texts = items
+                .iter()
+                .filter_map(|item| flatten_json_text(Some(item)))
+                .collect::<Vec<_>>();
+            if texts.is_empty() {
+                None
+            } else {
+                Some(texts.join(" / "))
+            }
+        }
+        Value::Object(map) => {
+            let texts = map
+                .values()
+                .filter_map(|item| flatten_json_text(Some(item)))
+                .collect::<Vec<_>>();
+            if texts.is_empty() {
+                None
+            } else {
+                Some(texts.join(" / "))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn first_non_empty_string(value: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(text) = value.get(*key).and_then(|item| item.as_str()) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn build_service_key_point(service: &Value) -> Option<String> {
+    let name = first_non_empty_string(service, &["normalized_name", "name"])?;
+    let mut parts = vec![name];
+
+    if let Some(category) = first_non_empty_string(service, &["category"]) {
+        parts.push(format!("カテゴリ: {}", category));
+    }
+    if let Some(score) = service
+        .get("attention_score_0_to_100")
+        .and_then(|value| value.as_i64())
+    {
+        parts.push(format!("注目度: {}/100", score));
+    }
+    if let Some(sentiment) = first_non_empty_string(service, &["sentiment"]) {
+        parts.push(format!("センチメント: {}", sentiment));
+    }
+    if let Some(reason) = first_non_empty_string(service, &["why_people_care"]) {
+        parts.push(format!("理由: {}", reason));
+    }
+    if let Some(evidence) = build_evidence_summary(service.get("evidence")) {
+        parts.push(format!("根拠: {}", evidence));
+    }
+
+    Some(parts.join(" / "))
+}
+
+fn build_evidence_summary(value: Option<&Value>) -> Option<String> {
+    let evidence = value?.as_array()?.iter().find_map(|item| {
+        let timestamp = item.get("timestamp").and_then(|value| value.as_str())?.trim();
+        let speaker = item.get("speaker").and_then(|value| value.as_str())?.trim();
+        let quote = item.get("quote").and_then(|value| value.as_str())?.trim();
+        if timestamp.is_empty() || speaker.is_empty() || quote.is_empty() {
+            return None;
+        }
+        Some(format!("{} {}: {}", timestamp, speaker, quote))
+    })?;
+
+    Some(evidence)
+}
+
+fn build_action_plan_items(value: Option<&Value>) -> Vec<String> {
+    let Some(action_plan) = value else {
+        return Vec::new();
+    };
+
+    let mut items = Vec::new();
+    for (key, label) in [
+        ("immediate", "今すぐ確認"),
+        ("intraday", "今日中に監視"),
+        ("swing", "中期で監視"),
+    ] {
+        match action_plan.get(key) {
+            Some(Value::String(text)) => {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    items.push(format!("{}: {}", label, trimmed));
+                }
+            }
+            Some(Value::Array(values)) => {
+                for text in values.iter().filter_map(|value| value.as_str()) {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        items.push(format!("{}: {}", label, trimmed));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    items
+}
+
+fn build_service_action(service: &Value) -> Option<String> {
+    let name = first_non_empty_string(service, &["normalized_name", "name"])?;
+    match service.get("recommended_actions") {
+        Some(Value::String(text)) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(format!("{}: {}", name, trimmed))
+            }
+        }
+        Some(Value::Array(items)) => items.iter().find_map(|value| {
+            let text = value.as_str()?.trim();
+            if text.is_empty() {
+                None
+            } else {
+                Some(format!("{}: {}", name, text))
+            }
+        }),
+        _ => None,
+    }
 }
 
 fn is_summary_heading(value: &str) -> bool {
@@ -621,5 +839,41 @@ mod tests {
         );
 
         assert_eq!(display_prompt(&task), "原油について教えて");
+    }
+
+    #[test]
+    fn parses_json_report_sections_for_cli_output() {
+        let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
+        task.raw_output = Some(
+            "STDOUT\n{\n  \"services\": [\n    {\n      \"name\": \"Hyperliquid\",\n      \"normalized_name\": \"Hyperliquid\",\n      \"category\": \"DEX\",\n      \"attention_score_0_to_100\": 92,\n      \"sentiment\": \"強気\",\n      \"why_people_care\": \"出来高の急増が続いている\",\n      \"recommended_actions\": [\"Funding と OI を追う\"],\n      \"evidence\": [\n        {\n          \"timestamp\": \"10:15\",\n          \"speaker\": \"alice\",\n          \"quote\": \"Hyperliquid の出来高がまた増えている\"\n        }\n      ]\n    }\n  ],\n  \"market_summary\": \"市場全体では短期資金の流入期待が優勢。\",\n  \"action_plan\": {\n    \"immediate\": [\"Funding の急変を確認する\"],\n    \"intraday\": \"出来高継続を監視する\",\n    \"swing\": [\"TGE 関連日程を確認する\"]\n  }\n}\n\n人間向け要約\n- Hyperliquid が中心話題".into(),
+        );
+        task.public_summary = Some("公開用の一文。".into());
+
+        let report = parse_report_sections(&task);
+
+        assert_eq!(report.summary, "市場全体では短期資金の流入期待が優勢。");
+        assert_eq!(report.key_points.len(), 1);
+        assert!(report.key_points[0].contains("Hyperliquid"));
+        assert!(report.key_points[0].contains("注目度: 92/100"));
+        assert!(report.key_points[0].contains("根拠: 10:15 alice: Hyperliquid の出来高がまた増えている"));
+        assert_eq!(
+            report.next_steps,
+            vec![
+                "今すぐ確認: Funding の急変を確認する",
+                "今日中に監視: 出来高継続を監視する",
+                "中期で監視: TGE 関連日程を確認する"
+            ]
+        );
+    }
+
+    #[test]
+    fn falls_back_when_json_is_invalid() {
+        let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
+        task.raw_output = Some("STDOUT\n{\"services\": [\n\n## 1. 要約\n短い要約です。".into());
+        task.public_summary = Some("公開用の一文。".into());
+
+        let report = parse_report_sections(&task);
+
+        assert_eq!(report.summary, "短い要約です。");
     }
 }

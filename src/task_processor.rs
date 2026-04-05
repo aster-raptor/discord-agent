@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde_json::Value;
 use tracing::{error, info};
 
 use crate::codex::{CodexOutput, CodexRunner};
@@ -43,9 +44,33 @@ pub fn build_public_summary(output: &str) -> String {
         return "No summary available.".to_string();
     }
 
+    if let Some(summary) = build_json_public_summary(trimmed) {
+        let first_sentence = first_sentence(summary.trim());
+        return truncate_with_ellipsis(first_sentence, 80);
+    }
+
     let summary_source = first_summary_line(trimmed).unwrap_or(trimmed);
     let first_sentence = first_sentence(summary_source);
     truncate_with_ellipsis(first_sentence, 80)
+}
+
+fn build_json_public_summary(output: &str) -> Option<String> {
+    let json = extract_first_json_object(output)?;
+
+    if let Some(summary) = flatten_json_text(json.get("market_summary")) {
+        let trimmed = summary.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let service = json.get("services")?.as_array()?.iter().find_map(|value| {
+        let name = first_non_empty_string(value, &["normalized_name", "name"])?;
+        let why = first_non_empty_string(value, &["why_people_care"])?;
+        Some(format!("{}: {}", name, why))
+    })?;
+
+    Some(service)
 }
 
 fn first_summary_line(value: &str) -> Option<&str> {
@@ -100,6 +125,91 @@ fn truncate_with_ellipsis(value: &str, max_chars: usize) -> String {
     let mut truncated = value.chars().take(max_chars).collect::<String>();
     truncated.push_str("...");
     truncated
+}
+
+fn extract_first_json_object(value: &str) -> Option<Value> {
+    let start = value.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (offset, ch) in value[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let end = start + offset + ch.len_utf8();
+                    return serde_json::from_str::<Value>(&value[start..end]).ok();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn flatten_json_text(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Value::Array(items) => {
+            let texts = items
+                .iter()
+                .filter_map(|item| flatten_json_text(Some(item)))
+                .collect::<Vec<_>>();
+            if texts.is_empty() {
+                None
+            } else {
+                Some(texts.join(" / "))
+            }
+        }
+        Value::Object(map) => {
+            let texts = map
+                .values()
+                .filter_map(|item| flatten_json_text(Some(item)))
+                .collect::<Vec<_>>();
+            if texts.is_empty() {
+                None
+            } else {
+                Some(texts.join(" / "))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn first_non_empty_string(value: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(text) = value.get(*key).and_then(|item| item.as_str()) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
 }
 
 async fn handle_task_completion(
@@ -196,5 +306,34 @@ mod tests {
     fn falls_back_for_empty_output() {
         let summary = build_public_summary("   ");
         assert_eq!(summary, "No summary available.");
+    }
+
+    #[test]
+    fn builds_public_summary_from_json_market_summary() {
+        let summary = build_public_summary(
+            r#"{
+  "market_summary": "市場全体では資金流入期待が優勢です。",
+  "services": []
+}"#,
+        );
+        assert_eq!(summary, "市場全体では資金流入期待が優勢です。");
+    }
+
+    #[test]
+    fn builds_public_summary_from_json_services_when_market_summary_missing() {
+        let summary = build_public_summary(
+            r#"{
+  "services": [
+    {
+      "name": "Hyperliquid",
+      "why_people_care": "出来高の増加が短期資金の流入を示している"
+    }
+  ]
+}"#,
+        );
+        assert_eq!(
+            summary,
+            "Hyperliquid: 出来高の増加が短期資金の流入を示している"
+        );
     }
 }
