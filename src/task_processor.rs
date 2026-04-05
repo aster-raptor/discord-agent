@@ -13,7 +13,12 @@ pub async fn process_task(
     task_id: &str,
 ) -> Result<()> {
     let task = database.get_task(task_id)?;
-    info!(task_id = %task.id, "starting CLI task execution");
+    info!(
+        task_id = %task.id,
+        notion_enabled = notion.is_enabled(),
+        missing_notion_configuration = ?notion.missing_configuration(),
+        "starting CLI task execution"
+    );
 
     database.mark_running(&task.id)?;
     let output = codex.run_research(&task).await;

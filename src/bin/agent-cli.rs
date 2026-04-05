@@ -73,7 +73,7 @@ async fn submit_task(
 
     database.insert_task(&task)?;
     database.update_status(&task.id, discord_agent::models::TaskStatus::Queued, Some("task queued"))?;
-    spawn_worker_process(&task.id, prompt_template)?;
+    spawn_worker_process(&config, &task.id, prompt_template)?;
 
     println!("{}", json!({ "task_id": task.id }));
     Ok(())
@@ -119,13 +119,18 @@ async fn run_worker(config: AppConfig, task_id: &str) -> Result<()> {
     process_task(&database, &notion, &codex, task_id).await
 }
 
-fn spawn_worker_process(task_id: &str, prompt_template: Option<&str>) -> Result<()> {
+fn spawn_worker_process(
+    config: &AppConfig,
+    task_id: &str,
+    prompt_template: Option<&str>,
+) -> Result<()> {
     let current_exe = env::current_exe().context("failed to resolve current executable")?;
     let mut command = Command::new(current_exe);
     command
         .arg("worker")
         .arg("--task-id")
         .arg(task_id);
+    apply_config_env(&mut command, config);
     if let Some(path) = prompt_template {
         command.arg("--prompt-template").arg(path);
     }
@@ -137,6 +142,32 @@ fn spawn_worker_process(task_id: &str, prompt_template: Option<&str>) -> Result<
         .spawn()
         .context("failed to spawn background worker process")?;
     Ok(())
+}
+
+fn apply_config_env(command: &mut Command, config: &AppConfig) {
+    command
+        .env("DISCORD_TOKEN", &config.discord_token)
+        .env(
+            "DISCORD_ALLOWED_CHANNEL_IDS",
+            config
+                .discord_allowed_channel_ids
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        )
+        .env("SQLITE_PATH", &config.sqlite_path)
+        .env("LOG_FILE_PATH", &config.log_file_path)
+        .env("RESEARCH_PROMPT_PATH", &config.research_prompt_path)
+        .env("CODEX_BIN", &config.codex_bin)
+        .env("CODEX_MODEL", config.codex_model.as_deref().unwrap_or(""))
+        .env("WORKER_CONCURRENCY", config.worker_concurrency.to_string())
+        .env("NOTION_TOKEN", config.notion_token.as_deref().unwrap_or(""))
+        .env(
+            "NOTION_TASK_DATABASE_ID",
+            config.notion_task_database_id.as_deref().unwrap_or(""),
+        )
+        .env("PUBLIC_BASE_URL", &config.public_base_url);
 }
 
 fn read_flag(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
