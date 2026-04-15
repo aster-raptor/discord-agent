@@ -9,12 +9,18 @@ describe("public task rendering", () => {
         taskId: "task-123",
         title: "Example",
         summary: "One-line summary.",
+        publicUrl: "https://www.notion.so/workspace/task-123",
         completedAt: "2026-03-22T12:00:00Z",
         updatedAt: "2026-03-22T12:00:00Z",
       },
     ]);
 
-    expect(rss).toContain("<link>https://example.com/tasks/task-123</link>");
+    expect(rss).toContain(
+      "<channel><title>discord-agent reports</title><link>https://example.com</link>",
+    );
+    expect(rss).toContain(
+      "<link>https://www.notion.so/workspace/task-123</link>",
+    );
     expect(rss).toContain("<title>Example</title>");
     expect(rss).toContain("<description>One-line summary.</description>");
   });
@@ -24,6 +30,7 @@ describe("public task rendering", () => {
       taskId: "task-123",
       title: "<Example>",
       summary: "A&B",
+      publicUrl: "https://www.notion.so/workspace/task-123",
       completedAt: null,
       updatedAt: "2026-03-22T12:00:00Z",
     });
@@ -37,6 +44,7 @@ describe("public task rendering", () => {
       taskId: "task-456",
       title: "Example",
       summary: "First sentence only.",
+      publicUrl: "https://www.notion.so/workspace/task-456",
       completedAt: "2026-03-22T12:00:00Z",
       updatedAt: "2026-03-22T12:00:00Z",
     });

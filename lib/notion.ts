@@ -9,6 +9,7 @@ interface NotionQueryResponse {
 }
 
 interface NotionPage {
+  url?: string;
   properties?: Record<string, unknown>;
 }
 
@@ -68,6 +69,7 @@ export function extractPublishedTasks(
       taskId,
       title: extractPlainText(properties, "Title"),
       summary: extractPlainText(properties, "Public Summary"),
+      publicUrl: page.url ?? extractPlainText(properties, "Public URL"),
       completedAt: extractDate(properties, "Completed At"),
       updatedAt: extractDate(properties, "Updated At") ?? "",
     });

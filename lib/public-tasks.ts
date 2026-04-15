@@ -2,6 +2,7 @@ export interface PublicTaskSummary {
   taskId: string;
   title: string;
   summary: string;
+  publicUrl: string;
   completedAt?: string | null;
   updatedAt: string;
 }
@@ -25,10 +26,9 @@ export function renderRss(
 ): string {
   const items = tasks
     .map((task) => {
-      const link = `${baseUrl}/tasks/${task.taskId}`;
       const publishedAt = task.completedAt ?? task.updatedAt;
 
-      return `<item><title>${xmlEscape(task.title)}</title><link>${xmlEscape(link)}</link><guid>${xmlEscape(task.taskId)}</guid><description>${xmlEscape(task.summary)}</description><pubDate>${xmlEscape(publishedAt)}</pubDate></item>`;
+      return `<item><title>${xmlEscape(task.title)}</title><link>${xmlEscape(task.publicUrl)}</link><guid>${xmlEscape(task.taskId)}</guid><description>${xmlEscape(task.summary)}</description><pubDate>${xmlEscape(publishedAt)}</pubDate></item>`;
     })
     .join("");
 
