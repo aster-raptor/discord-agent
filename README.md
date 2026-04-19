@@ -153,6 +153,39 @@ print(task_id)
 
 `--prompt-template` で使用する prompt template ファイルを指定できます。未指定の場合は `prompts/research.txt` を使います。
 
+Telegram 会話ログ向けには `prompts/telegram_summary.txt` のような専用テンプレートも使えます。例:
+
+```bash
+agent-cli submit --prompt "Telegram 会話から注目テーマを抽出してください" --path /data/telegram/latest.json --prompt-template prompts/telegram_summary.txt
+```
+
+`prompts/telegram_summary.txt` は、Telegram 会話を材料に JSON と人間向け要約を返す想定です。下流処理との互換性のため、少なくとも次のトップレベルキーは維持してください。
+
+- `services`
+- `market_summary`
+- `action_plan`
+- `noise_topics`
+
+特に `market_summary` と `services` は公開用サマリー生成や Notion 整形で参照されます。
+
+prompt template では次のプレースホルダーを使用できます。
+
+- `{task_type}`: タスク種別。現在の Research タスクでは `research`
+- `{user_request}`: ユーザーが指定した依頼文
+- `{local_input_path}`: `--path` や添付ファイルから取り込んだローカル入力のパス。入力がない場合は空文字
+- `{local_input_data}`: ローカル入力ファイルの内容。入力がない場合は空文字
+- `{local_input_section}`: ローカル入力をまとめた整形済みブロック。入力がある場合は `Local input path:` と `Local input data:` を含み、入力がない場合は空文字
+
+例:
+
+```text
+Task type: {task_type}
+User request:
+{user_request}
+
+{local_input_section}
+```
+
 ## Binaries
 
 - `bot`: Discord の Slash Command を受け取り、内部キューへ積み、Codexを実行し、結果をSQLiteとNotionへ保存します。
