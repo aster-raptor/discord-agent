@@ -49,6 +49,8 @@ impl Database {
                 prompt TEXT NOT NULL,
                 input_source_path TEXT,
                 input_payload TEXT,
+                previous_task_id TEXT,
+                previous_notion_page_url TEXT,
                 task_type TEXT NOT NULL,
                 status TEXT NOT NULL,
                 publish INTEGER NOT NULL DEFAULT 0,
@@ -93,6 +95,8 @@ impl Database {
         ensure_column(&connection, "tasks", "input_source_path", "TEXT")?;
         ensure_column(&connection, "tasks", "input_payload", "TEXT")?;
         ensure_column(&connection, "tasks", "notion_page_url", "TEXT")?;
+        ensure_column(&connection, "tasks", "previous_task_id", "TEXT")?;
+        ensure_column(&connection, "tasks", "previous_notion_page_url", "TEXT")?;
         Ok(())
     }
 
@@ -102,10 +106,11 @@ impl Database {
             r#"
             INSERT INTO tasks (
                 id, thread_id, channel_id, guild_id, requester_id, discord_message_id,
-                title, prompt, input_source_path, input_payload, task_type, status, publish,
+                title, prompt, input_source_path, input_payload, previous_task_id,
+                previous_notion_page_url, task_type, status, publish,
                 public_summary, raw_output, notion_page_id, notion_page_url, error_text, started_at, completed_at,
                 created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
             "#,
             params![
                 &task.id,
@@ -118,6 +123,8 @@ impl Database {
                 &task.prompt,
                 &task.input_source_path,
                 &task.input_payload,
+                &task.previous_task_id,
+                &task.previous_notion_page_url,
                 task.task_type.as_str(),
                 task.status.as_str(),
                 bool_to_sql(task.publish),
@@ -295,7 +302,8 @@ impl Database {
             .query_row(
                 r#"
                 SELECT id, thread_id, channel_id, discord_message_id, title, prompt,
-                       input_source_path, input_payload, task_type, status, publish, public_summary,
+                       input_source_path, input_payload, previous_task_id, previous_notion_page_url,
+                       task_type, status, publish, public_summary,
                        raw_output, notion_page_id, notion_page_url, error_text, started_at, completed_at, created_at, updated_at
                 FROM tasks
                 WHERE id = ?1
@@ -348,18 +356,20 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         prompt: row.get(5)?,
         input_source_path: row.get(6)?,
         input_payload: row.get(7)?,
-        task_type: TaskType::from_str(&row.get::<_, String>(8)?),
-        status: TaskStatus::from_str(&row.get::<_, String>(9)?),
-        publish: row.get::<_, i64>(10)? != 0,
-        public_summary: row.get(11)?,
-        raw_output: row.get(12)?,
-        notion_page_id: row.get(13)?,
-        notion_page_url: row.get(14)?,
-        error_text: row.get(15)?,
-        started_at: row.get(16)?,
-        completed_at: row.get(17)?,
-        created_at: row.get(18)?,
-        updated_at: row.get(19)?,
+        previous_task_id: row.get(8)?,
+        previous_notion_page_url: row.get(9)?,
+        task_type: TaskType::from_str(&row.get::<_, String>(10)?),
+        status: TaskStatus::from_str(&row.get::<_, String>(11)?),
+        publish: row.get::<_, i64>(12)? != 0,
+        public_summary: row.get(13)?,
+        raw_output: row.get(14)?,
+        notion_page_id: row.get(15)?,
+        notion_page_url: row.get(16)?,
+        error_text: row.get(17)?,
+        started_at: row.get(18)?,
+        completed_at: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
     })
 }
 
@@ -384,5 +394,87 @@ fn bool_to_sql(value: bool) -> i64 {
         1
     } else {
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Database;
+    use crate::models::{TaskRecord, TaskType};
+    use rusqlite::Connection;
+    use std::sync::Mutex;
+
+    #[test]
+    fn migrates_existing_tasks_table_with_history_columns() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    guild_id TEXT NOT NULL,
+                    requester_id TEXT NOT NULL,
+                    discord_message_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    input_source_path TEXT,
+                    input_payload TEXT,
+                    task_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    publish INTEGER NOT NULL DEFAULT 0,
+                    public_summary TEXT,
+                    raw_output TEXT,
+                    notion_page_id TEXT,
+                    notion_page_url TEXT,
+                    error_text TEXT,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                "#,
+            )
+            .unwrap();
+        let database = Database {
+            connection: Mutex::new(connection),
+        };
+
+        database.init_schema().unwrap();
+
+        let connection = database.connection.lock().unwrap();
+        let mut statement = connection.prepare("PRAGMA table_info(tasks)").unwrap();
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert!(columns.contains(&"previous_task_id".to_string()));
+        assert!(columns.contains(&"previous_notion_page_url".to_string()));
+    }
+
+    #[test]
+    fn round_trips_task_history_fields() {
+        let database = Database::open(":memory:").unwrap();
+        let mut task = TaskRecord::new(
+            0,
+            0,
+            0,
+            "Telegram analysis".into(),
+            "prompt".into(),
+            TaskType::Research,
+        );
+        task.previous_task_id = Some("previous-task".into());
+        task.previous_notion_page_url = Some("https://www.notion.so/previous".into());
+
+        database.insert_task(&task).unwrap();
+        let loaded = database.get_task(&task.id).unwrap();
+
+        assert_eq!(loaded.previous_task_id, task.previous_task_id);
+        assert_eq!(
+            loaded.previous_notion_page_url,
+            task.previous_notion_page_url
+        );
     }
 }

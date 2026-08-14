@@ -12,6 +12,14 @@ use discord_agent::models::{TaskRecord, TaskType};
 use discord_agent::notion::NotionClient;
 use discord_agent::task_processor::process_task;
 use serde_json::json;
+use tracing::warn;
+
+struct SubmitArgs {
+    prompt: String,
+    path: String,
+    prompt_template: Option<String>,
+    previous_task_id: Option<String>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -25,10 +33,15 @@ async fn main() -> Result<()> {
 
     match command.as_str() {
         "submit" => {
-            let prompt = read_flag(&mut args, "--prompt")?;
-            let path = read_flag(&mut args, "--path")?;
-            let prompt_template = read_optional_flag(&mut args, "--prompt-template");
-            submit_task(config, &prompt, &path, prompt_template.as_deref()).await
+            let submit_args = parse_submit_args(args.collect::<Vec<_>>())?;
+            submit_task(
+                config,
+                &submit_args.prompt,
+                &submit_args.path,
+                submit_args.prompt_template.as_deref(),
+                submit_args.previous_task_id.as_deref(),
+            )
+            .await
         }
         "status" => {
             let task_id = read_flag(&mut args, "--task-id")?;
@@ -56,6 +69,7 @@ async fn submit_task(
     prompt: &str,
     path: &str,
     prompt_template: Option<&str>,
+    previous_task_id: Option<&str>,
 ) -> Result<()> {
     let database = Arc::new(Database::open(&config.sqlite_path)?);
     let loaded_input = load_from_path(path)?;
@@ -70,6 +84,7 @@ async fn submit_task(
     );
     task.input_source_path = Some(loaded_input.source_path.clone());
     task.input_payload = Some(loaded_input.payload.clone());
+    attach_previous_task(&database, &mut task, previous_task_id);
 
     database.insert_task(&task)?;
     database.update_status(&task.id, discord_agent::models::TaskStatus::Queued, Some("task queued"))?;
@@ -106,10 +121,46 @@ fn print_result(config: AppConfig, task_id: &str) -> Result<()> {
             "raw_output": task.raw_output,
             "error_text": task.error_text,
             "notion_page_id": task.notion_page_id,
-            "notion_page_url": task.notion_page_url
+            "notion_page_url": task.notion_page_url,
+            "previous_task_id": task.previous_task_id,
+            "previous_notion_page_url": task.previous_notion_page_url
         })
     );
     Ok(())
+}
+
+fn attach_previous_task(
+    database: &Database,
+    task: &mut TaskRecord,
+    previous_task_id: Option<&str>,
+) {
+    let Some(previous_task_id) = previous_task_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+
+    task.previous_task_id = Some(previous_task_id.to_string());
+    match database.get_task(previous_task_id) {
+        Ok(previous_task) => match previous_task
+            .notion_page_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(url) => task.previous_notion_page_url = Some(url.to_string()),
+            None => warn!(
+                previous_task_id,
+                "previous task has no notion page URL; continuing without a history link"
+            ),
+        },
+        Err(error) => warn!(
+            previous_task_id,
+            error = %error,
+            "previous task was not found; continuing without a history link"
+        ),
+    }
 }
 
 async fn run_worker(config: AppConfig, task_id: &str) -> Result<()> {
@@ -190,6 +241,28 @@ fn read_optional_flag(args: &mut impl Iterator<Item = String>, flag: &str) -> Op
     None
 }
 
+fn parse_submit_args(args: Vec<String>) -> Result<SubmitArgs> {
+    Ok(SubmitArgs {
+        prompt: find_flag_value(&args, "--prompt")?
+            .ok_or_else(|| anyhow!("missing required flag --prompt"))?,
+        path: find_flag_value(&args, "--path")?
+            .ok_or_else(|| anyhow!("missing required flag --path"))?,
+        prompt_template: find_flag_value(&args, "--prompt-template")?,
+        previous_task_id: find_flag_value(&args, "--previous-task-id")?,
+    })
+}
+
+fn find_flag_value(args: &[String], flag: &str) -> Result<Option<String>> {
+    let Some(index) = args.iter().position(|value| value == flag) else {
+        return Ok(None);
+    };
+    let value = args
+        .get(index + 1)
+        .filter(|value| !value.starts_with("--"))
+        .ok_or_else(|| anyhow!("missing value for {}", flag))?;
+    Ok(Some(value.clone()))
+}
+
 fn build_title(prompt: &str) -> String {
     let mut title = prompt
         .lines()
@@ -210,7 +283,9 @@ fn build_title(prompt: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::read_optional_flag;
+    use super::{attach_previous_task, parse_submit_args, read_optional_flag};
+    use discord_agent::db::Database;
+    use discord_agent::models::{TaskRecord, TaskType};
 
     #[test]
     fn reads_optional_flag_when_present() {
@@ -234,5 +309,87 @@ mod tests {
         let value = read_optional_flag(&mut args, "--prompt-template");
 
         assert_eq!(value, None);
+    }
+
+    #[test]
+    fn parses_submit_flags_in_any_order_with_previous_task() {
+        let parsed = parse_submit_args(vec![
+            "--previous-task-id".into(),
+            "previous-id".into(),
+            "--path".into(),
+            "/tmp/input.json".into(),
+            "--prompt".into(),
+            "Telegram analysis".into(),
+            "--prompt-template".into(),
+            "prompts/telegram_summary.txt".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(parsed.prompt, "Telegram analysis");
+        assert_eq!(parsed.path, "/tmp/input.json");
+        assert_eq!(parsed.previous_task_id.as_deref(), Some("previous-id"));
+        assert_eq!(
+            parsed.prompt_template.as_deref(),
+            Some("prompts/telegram_summary.txt")
+        );
+    }
+
+    #[test]
+    fn parses_submit_without_optional_previous_task() {
+        let parsed = parse_submit_args(vec![
+            "--prompt".into(),
+            "analysis".into(),
+            "--path".into(),
+            "/tmp/input.json".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(parsed.previous_task_id, None);
+        assert_eq!(parsed.prompt_template, None);
+    }
+
+    #[test]
+    fn resolves_previous_notion_page_url_without_blocking_missing_tasks() {
+        let database = Database::open(":memory:").unwrap();
+        let mut previous = TaskRecord::new(
+            0,
+            0,
+            0,
+            "previous".into(),
+            "prompt".into(),
+            TaskType::Research,
+        );
+        previous.notion_page_url = Some("https://www.notion.so/previous".into());
+        database.insert_task(&previous).unwrap();
+
+        let mut linked = TaskRecord::new(
+            0,
+            0,
+            0,
+            "linked".into(),
+            "prompt".into(),
+            TaskType::Research,
+        );
+        attach_previous_task(&database, &mut linked, Some(&previous.id));
+        assert_eq!(
+            linked.previous_task_id.as_deref(),
+            Some(previous.id.as_str())
+        );
+        assert_eq!(
+            linked.previous_notion_page_url.as_deref(),
+            Some("https://www.notion.so/previous")
+        );
+
+        let mut missing = TaskRecord::new(
+            0,
+            0,
+            0,
+            "missing".into(),
+            "prompt".into(),
+            TaskType::Research,
+        );
+        attach_previous_task(&database, &mut missing, Some("missing-task"));
+        assert_eq!(missing.previous_task_id.as_deref(), Some("missing-task"));
+        assert_eq!(missing.previous_notion_page_url, None);
     }
 }
