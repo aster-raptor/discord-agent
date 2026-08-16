@@ -273,6 +273,22 @@ fn paragraph_block(body: &str) -> Value {
     })
 }
 
+fn linked_paragraph_block(label: &str, url: &str) -> Value {
+    json!({
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {
+            "rich_text": [{
+                "type": "text",
+                "text": {
+                    "content": truncate(label, 1800),
+                    "link": { "url": url }
+                }
+            }]
+        }
+    })
+}
+
 fn bulleted_list_item_block(body: &str) -> Value {
     json!({
         "object": "block",
@@ -316,8 +332,15 @@ fn display_prompt(task: &TaskRecord) -> String {
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ReportSections {
     summary: String,
+    changes_since_previous: Option<PreviousChanges>,
     key_points: Vec<String>,
     next_steps: Vec<String>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PreviousChanges {
+    baseline_available: Option<bool>,
+    items: Vec<String>,
 }
 
 fn build_page_children(task: &TaskRecord, report: &ReportSections) -> Vec<Value> {
@@ -330,6 +353,29 @@ fn build_page_children(task: &TaskRecord, report: &ReportSections) -> Vec<Value>
 
     children.push(heading_block("要約"));
     children.push(paragraph_block(&summary_body));
+
+    if let Some(changes) = &report.changes_since_previous {
+        children.push(heading_block("前回からの変化"));
+        if changes.baseline_available == Some(false) {
+            children.push(paragraph_block("初回のため比較対象なし"));
+        } else if changes.items.is_empty() {
+            children.push(paragraph_block("前回からの明示的な変化なし"));
+        } else {
+            for item in &changes.items {
+                children.push(bulleted_list_item_block(item));
+            }
+        }
+    }
+
+    if let Some(url) = task
+        .previous_notion_page_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        children.push(heading_block("前回の分析リンク"));
+        children.push(linked_paragraph_block("前回の分析を開く", url));
+    }
 
     if !report.key_points.is_empty() {
         children.push(heading_block("主要ポイント"));
@@ -382,6 +428,13 @@ fn parse_report_sections(task: &TaskRecord) -> ReportSections {
             current_section = Some("summary");
             continue;
         }
+        if is_changes_heading(trimmed) {
+            report
+                .changes_since_previous
+                .get_or_insert_with(PreviousChanges::default);
+            current_section = Some("changes_since_previous");
+            continue;
+        }
         if is_key_points_heading(trimmed) {
             current_section = Some("key_points");
             continue;
@@ -398,6 +451,11 @@ fn parse_report_sections(task: &TaskRecord) -> ReportSections {
                 }
                 report.summary.push_str(trimmed);
             }
+            Some("changes_since_previous") => report
+                .changes_since_previous
+                .get_or_insert_with(PreviousChanges::default)
+                .items
+                .push(clean_list_item(trimmed)),
             Some("key_points") => report.key_points.push(clean_list_item(trimmed)),
             Some("next_steps") => report.next_steps.push(clean_list_item(trimmed)),
             _ => {}
@@ -413,6 +471,9 @@ fn finalize_report_sections(task: &TaskRecord, mut report: ReportSections) -> Re
     }
     report.key_points.retain(|item| !item.is_empty());
     report.next_steps.retain(|item| !item.is_empty());
+    if let Some(changes) = &mut report.changes_since_previous {
+        changes.items.retain(|item| !item.is_empty());
+    }
     report
 }
 
@@ -431,6 +492,7 @@ fn parse_json_report_sections(stdout: &str) -> Option<ReportSections> {
     let mut report = ReportSections::default();
 
     report.summary = flatten_json_text(json.get("market_summary")).unwrap_or_default();
+    report.changes_since_previous = parse_previous_changes(json.get("changes_since_previous"));
 
     if let Some(services) = json.get("services").and_then(|value| value.as_array()) {
         report.key_points = services
@@ -448,10 +510,47 @@ fn parse_json_report_sections(stdout: &str) -> Option<ReportSections> {
         report.next_steps = actions;
     }
 
-    if report.summary.is_empty() && report.key_points.is_empty() && report.next_steps.is_empty() {
+    if report.summary.is_empty()
+        && report.changes_since_previous.is_none()
+        && report.key_points.is_empty()
+        && report.next_steps.is_empty()
+    {
         None
     } else {
         Some(report)
+    }
+}
+
+fn parse_previous_changes(value: Option<&Value>) -> Option<PreviousChanges> {
+    let changes = value?.as_object()?;
+    let mut result = PreviousChanges {
+        baseline_available: changes.get("baseline_available").and_then(Value::as_bool),
+        ..PreviousChanges::default()
+    };
+
+    for (key, label) in [
+        ("new", "新規"),
+        ("strengthened", "強まった"),
+        ("weakened", "弱まった"),
+        ("reversed", "反転"),
+        ("resolved", "解消"),
+    ] {
+        for item in json_text_items(changes.get(key)) {
+            result.items.push(format!("{}: {}", label, item));
+        }
+    }
+
+    Some(result)
+}
+
+fn json_text_items(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| flatten_json_text(Some(item)))
+            .collect(),
+        Some(value) => flatten_json_text(Some(value)).into_iter().collect(),
+        None => Vec::new(),
     }
 }
 
@@ -646,6 +745,12 @@ fn is_key_points_heading(value: &str) -> bool {
         && normalized_section_heading(value).contains("主要ポイント")
 }
 
+fn is_changes_heading(value: &str) -> bool {
+    let normalized = normalized_section_heading(value);
+    (looks_like_section_heading(value) || normalized == "前回からの変化")
+        && normalized.contains("前回からの変化")
+}
+
 fn is_next_steps_heading(value: &str) -> bool {
     looks_like_section_heading(value)
         && normalized_section_heading(value).contains("次に見るべき点")
@@ -803,6 +908,8 @@ mod tests {
         assert!(!serialized.contains("入力データ概要"));
         assert!(!serialized.contains("No local input data."));
         assert!(!serialized.contains("STDERR"));
+        assert!(!serialized.contains("前回からの変化"));
+        assert!(!serialized.contains("前回の分析"));
     }
 
     #[test]
@@ -875,5 +982,104 @@ mod tests {
         let report = parse_report_sections(&task);
 
         assert_eq!(report.summary, "短い要約です。");
+    }
+
+    #[test]
+    fn parses_all_previous_change_categories_in_display_order() {
+        let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
+        task.raw_output = Some(
+            r#"STDOUT
+{
+  "market_summary": "要約",
+  "changes_since_previous": {
+    "baseline_available": true,
+    "resolved": ["懸念が解消"],
+    "reversed": ["弱気から強気へ反転"],
+    "weakened": ["売り圧力が弱まった"],
+    "strengthened": ["出来高増加が強まった"],
+    "new": ["新しい上場観測"]
+  }
+}"#
+                .into(),
+        );
+
+        let changes = parse_report_sections(&task)
+            .changes_since_previous
+            .unwrap();
+
+        assert_eq!(changes.baseline_available, Some(true));
+        assert_eq!(
+            changes.items,
+            vec![
+                "新規: 新しい上場観測",
+                "強まった: 出来高増加が強まった",
+                "弱まった: 売り圧力が弱まった",
+                "反転: 弱気から強気へ反転",
+                "解消: 懸念が解消",
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_initial_and_no_change_messages() {
+        for (baseline, expected) in [
+            (false, "初回のため比較対象なし"),
+            (true, "前回からの明示的な変化なし"),
+        ] {
+            let mut task = TaskRecord::new(
+                1,
+                1,
+                1,
+                "title".into(),
+                "prompt".into(),
+                TaskType::Research,
+            );
+            task.raw_output = Some(format!(
+                "STDOUT\n{{\"market_summary\":\"要約\",\"changes_since_previous\":{{\"baseline_available\":{},\"new\":[],\"strengthened\":[],\"weakened\":[],\"reversed\":[],\"resolved\":[]}}}}",
+                baseline
+            ));
+
+            let report = parse_report_sections(&task);
+            let serialized = serde_json::to_string(&build_page_children(&task, &report)).unwrap();
+
+            assert!(serialized.contains(expected));
+        }
+    }
+
+    #[test]
+    fn falls_back_to_human_previous_changes_when_json_is_invalid() {
+        let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
+        task.raw_output = Some(
+            "STDOUT\n{\"services\": [\n\n## 1. 要約\n短い要約です。\n\n## 2. 前回からの変化\n- 新規: 新しい話題\n- 解消: 古い懸念\n\n## 3. 主要ポイント\n- ポイント"
+                .into(),
+        );
+
+        let report = parse_report_sections(&task);
+        let changes = report.changes_since_previous.unwrap();
+
+        assert_eq!(changes.items, vec!["新規: 新しい話題", "解消: 古い懸念"]);
+        assert_eq!(report.key_points, vec!["ポイント"]);
+    }
+
+    #[test]
+    fn renders_link_to_previous_notion_page_after_changes() {
+        let mut task = TaskRecord::new(1, 1, 1, "title".into(), "prompt".into(), TaskType::Research);
+        task.raw_output = Some(
+            "STDOUT\n{\"market_summary\":\"要約\",\"changes_since_previous\":{\"baseline_available\":true,\"new\":[\"新しい話題\"]}}"
+                .into(),
+        );
+        task.previous_task_id = Some("previous-task".into());
+        task.previous_notion_page_url = Some("https://www.notion.so/previous-page".into());
+
+        let report = parse_report_sections(&task);
+        let serialized = serde_json::to_string(&build_page_children(&task, &report)).unwrap();
+
+        let changes_position = serialized.find("前回からの変化").unwrap();
+        let link_position = serialized.find("前回の分析を開く").unwrap();
+        let key_points_position = serialized.find("依頼内容").unwrap();
+        assert!(changes_position < link_position);
+        assert!(link_position < key_points_position);
+        assert!(serialized.contains("https://www.notion.so/previous-page"));
+        assert!(serialized.contains("\"link\":{\"url\""));
     }
 }

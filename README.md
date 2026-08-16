@@ -120,6 +120,7 @@ Python やシェルからローカルデータを分析したい場合は `agent
 ```bash
 agent-cli submit --prompt "Telegram メッセージを要約してください" --path /data/telegram/latest.json
 agent-cli submit --prompt "Telegram メッセージを要約してください" --path /data/telegram/latest.json --prompt-template prompts/custom-research.txt
+agent-cli submit --prompt "Telegram メッセージを要約してください" --path /data/telegram/latest.json --prompt-template prompts/telegram_summary.txt --previous-task-id <previous_task_id>
 agent-cli status --task-id <task_id>
 agent-cli result --task-id <task_id>
 ```
@@ -153,6 +154,8 @@ print(task_id)
 
 `--prompt-template` で使用する prompt template ファイルを指定できます。未指定の場合は `prompts/research.txt` を使います。
 
+`--previous-task-id` は任意です。指定した前回タスクがSQLiteに残っていれば、そのNotion URLを新しいタスクへ引き継ぎ、Notion本文から前回ページへリンクします。タスクが見つからない場合やNotion URLがない場合も、警告を記録して新しい分析は継続します。
+
 Telegram 会話ログ向けには `prompts/telegram_summary.txt` のような専用テンプレートも使えます。例:
 
 ```bash
@@ -163,10 +166,11 @@ agent-cli submit --prompt "Telegram 会話から注目テーマを抽出して�
 
 - `services`
 - `market_summary`
+- `changes_since_previous`
 - `action_plan`
 - `noise_topics`
 
-特に `market_summary` と `services` は公開用サマリー生成や Notion 整形で参照されます。
+特に `market_summary` と `services` は公開用サマリー生成や Notion 整形で参照されます。`changes_since_previous` はNotionの「前回からの変化」に使われ、公開用サマリーの形式には影響しません。
 
 prompt template では次のプレースホルダーを使用できます。
 
